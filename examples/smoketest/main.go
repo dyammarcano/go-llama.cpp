@@ -14,7 +14,9 @@ func main() {
 		fmt.Println("usage: smoketest <model.gguf> [prompt]")
 		os.Exit(2)
 	}
+
 	model := os.Args[1]
+
 	prompt := "The capital of France is"
 	if len(os.Args) > 2 {
 		prompt = os.Args[2]
@@ -27,6 +29,7 @@ func main() {
 	}
 
 	fmt.Printf("PROMPT: %q\nOUTPUT: ", prompt)
+
 	res, err := l.Predict(prompt,
 		llama.SetTokens(24),
 		llama.SetThreads(6),
@@ -39,5 +42,6 @@ func main() {
 		fmt.Println("\npredict error:", err)
 		os.Exit(1)
 	}
+
 	fmt.Printf("\n--- FINAL ---\n%s\n", res)
 }

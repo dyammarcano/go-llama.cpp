@@ -1,6 +1,6 @@
 module github.com/go-skynet/go-llama.cpp
 
-go 1.21
+go 1.25.0
 
 require (
 	github.com/onsi/ginkgo/v2 v2.13.0

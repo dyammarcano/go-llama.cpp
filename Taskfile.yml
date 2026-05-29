@@ -1,0 +1,67 @@
+version: '3'
+
+# Build orchestration for the go-llama.cpp binding (replaces the legacy Makefile).
+# Three backends share one binding.cpp / binding.h C ABI:
+#   cpu    - MinGW static libs        (default)                  -> go build
+#   vulkan - MinGW static + GGML_VULKAN (needs Vulkan SDK)       -> go build -tags vulkan*
+#   cuda   - MSVC shared DLLs + GGML_CUDA (needs VS2022 + CUDA)  -> go build -tags cuda
+# *vulkan currently links via the same static path as cpu.
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  deps:
+    desc: Initialise the llama.cpp submodule
+    cmds:
+      - git submodule update --init --recursive
+
+  build:cpu:
+    desc: Build llama.cpp (CPU, MinGW static) and the binding
+    cmds:
+      - bash build/llamacpp.sh cpu
+      - bash build/binding.sh
+
+  build:vulkan:
+    desc: Build llama.cpp (Vulkan, MinGW static) and the binding — needs Vulkan SDK
+    cmds:
+      - bash build/llamacpp.sh vulkan
+      - bash build/binding.sh
+
+  build:cuda:
+    desc: Build llama.cpp (CUDA, MSVC DLLs) and the binding — needs VS2022 + CUDA
+    cmds:
+      - cmd /c "build\\llamacpp-cuda.bat"
+      - bash build/binding.sh
+
+  build:
+    desc: Alias for build:cpu
+    cmds:
+      - task: build:cpu
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test ./...
+
+  fmt:
+    desc: Format Go sources
+    cmds:
+      - go fmt ./...
+
+  fix:
+    desc: Apply go fix
+    cmds:
+      - go fix ./...
+
+  lint:
+    desc: Run golangci-lint (auto-fix)
+    cmds:
+      - golangci-lint run --fix ./...
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - bash -c 'rm -rf llama.cpp/build-* build-cuda binding.o libbinding.a'

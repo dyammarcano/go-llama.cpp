@@ -34,11 +34,13 @@ func main() {
 		fmt.Printf("Parsing program arguments failed: %s", err)
 		os.Exit(1)
 	}
+
 	l, err := llama.New(model, llama.EnableF16Memory, llama.SetContext(128), llama.EnableEmbeddings, llama.SetGPULayers(gpulayers))
 	if err != nil {
 		fmt.Println("Loading the model failed:", err.Error())
 		os.Exit(1)
 	}
+
 	fmt.Printf("Model loaded successfully.\n")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -53,10 +55,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+
 		embeds, err := l.Embeddings(text)
 		if err != nil {
 			fmt.Printf("Embeddings: error %s \n", err.Error())
 		}
+
 		fmt.Printf("Embeddings: %v", embeds)
 		fmt.Printf("\n\n")
 	}
@@ -65,6 +69,7 @@ func main() {
 // readMultiLineInput reads input until an empty line is entered.
 func readMultiLineInput(reader *bufio.Reader) string {
 	var lines []string
+
 	fmt.Print(">>> ")
 
 	for {
@@ -73,6 +78,7 @@ func readMultiLineInput(reader *bufio.Reader) string {
 			if err == io.EOF {
 				os.Exit(0)
 			}
+
 			fmt.Printf("Reading the prompt failed: %s", err)
 			os.Exit(1)
 		}
@@ -86,5 +92,6 @@ func readMultiLineInput(reader *bufio.Reader) string {
 
 	text := strings.Join(lines, "")
 	fmt.Println("Sending", text)
+
 	return text
 }

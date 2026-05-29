@@ -261,6 +261,7 @@ func NewModelOptions(opts ...ModelOption) ModelOptions {
 	for _, opt := range opts {
 		opt(&p)
 	}
+
 	return p
 }
 
@@ -393,6 +394,7 @@ func NewPredictOptions(opts ...PredictOption) PredictOptions {
 	for _, opt := range opts {
 		opt(&p)
 	}
+
 	return p
 }
 
