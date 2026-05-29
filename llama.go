@@ -334,6 +334,63 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	return res, nil
 }
 
+// PredictResult generates a completion and returns the full generated text plus
+// the number of tokens generated. Unlike Predict, it does not cap the output to
+// the token count: it sizes the result buffer to the full length, growing and
+// retrying if the first buffer was too small.
+func (l *LLama) PredictResult(text string, opts ...PredictOption) (string, int, error) {
+	po := NewPredictOptions(opts...)
+
+	if po.TokenCallback != nil {
+		setCallback(l.state, po.TokenCallback)
+		defer setCallback(l.state, nil)
+	}
+
+	input := C.CString(text)
+	defer C.free(unsafe.Pointer(input))
+	if po.Tokens == 0 {
+		po.Tokens = 99999999
+	}
+
+	reverseCount := len(po.StopPrompts)
+	reversePrompt := make([]*C.char, reverseCount)
+	var pass **C.char
+	for i, s := range po.StopPrompts {
+		cs := C.CString(s)
+		reversePrompt[i] = cs
+		pass = &reversePrompt[0]
+	}
+
+	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
+		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
+		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
+		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
+		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
+		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL), C.CString(po.LogitBias),
+		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
+		C.CString(po.MainGPU), C.CString(po.TensorSplit),
+		C.bool(po.PromptCacheRO),
+		C.CString(po.Grammar),
+		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
+		C.int(po.NDraft),
+	)
+	defer C.llama_free_params(params)
+
+	var nTok C.int
+	size := 32768
+	for {
+		buf := make([]byte, size)
+		full := int(C.llama_predict_full(params, l.state, (*C.char)(unsafe.Pointer(&buf[0])), C.int(size), &nTok, C.bool(po.DebugMode)))
+		if full < 0 {
+			return "", 0, fmt.Errorf("inference failed")
+		}
+		if full < size {
+			return string(buf[:full]), int(nTok), nil
+		}
+		size = full + 1 // output was truncated; grow and retry
+	}
+}
+
 // ApplyChatTemplate formats a (system, user) pair using the model's embedded
 // GGUF chat template. It returns ("", nil) when the model has no template, so
 // callers can fall back to raw concatenation.

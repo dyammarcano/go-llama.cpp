@@ -54,6 +54,13 @@ int llama_tokenize_string(void* params_ptr, void* state_pr, int* result);
 
 int llama_predict(void* params_ptr, void* state_pr, char* result, bool debug);
 
+// llama_predict_full generates from params->prompt, writing up to result_size-1
+// bytes (NUL-terminated) into result and the generated token count into *n_tokens.
+// Returns the FULL generated length in bytes (may exceed result_size-1 → the
+// caller should resize and retry), or a negative value on error. Unlike
+// llama_predict, the output is not capped to the token count.
+int llama_predict_full(void* params_ptr, void* state_pr, char* result, int result_size, int* n_tokens, bool debug);
+
 // apply_chat_template formats (system,user) using the model's embedded GGUF
 // chat template into result (capacity result_size). Returns the formatted
 // length, or a negative/larger-than-capacity value if the buffer is too small.

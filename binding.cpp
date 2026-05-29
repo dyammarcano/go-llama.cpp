@@ -109,6 +109,70 @@ llama_sampler *make_sampler(const binding_params *bp) {
     return smpl;
 }
 
+// generate runs the prompt-decode + sampling loop, appending the full generated
+// text to `out` and setting `n_tokens` to the number of tokens produced.
+// Returns 0 on success, 1 on error. Streams each piece via tokenCallback.
+int generate(binding_params *bp, binding_state *st, std::string &out, int &n_tokens) {
+    n_tokens = 0;
+    if (bp->n_threads > 0) {
+        llama_set_n_threads(st->ctx, bp->n_threads, bp->n_threads);
+    }
+    llama_memory_clear(llama_get_memory(st->ctx), true);
+    st->n_past = 0;
+
+    std::vector<llama_token> toks = tokenize(st->vocab, bp->prompt, true);
+    const int n_ctx = (int)llama_n_ctx(st->ctx);
+    if ((int)toks.size() >= n_ctx) {
+        return 1;
+    }
+    if (decode_tokens(st->ctx, toks, bp->n_batch) != 0) {
+        return 1;
+    }
+    st->n_past = (int)toks.size();
+
+    llama_sampler *smpl = make_sampler(bp);
+    if (smpl == nullptr) {
+        return 1;
+    }
+
+    const int n_predict = bp->n_predict > 0 ? bp->n_predict : 128;
+    bool stop = false;
+    for (int i = 0; i < n_predict && st->n_past < n_ctx && !stop; i++) {
+        llama_token id = llama_sampler_sample(smpl, st->ctx, -1);
+        if (llama_vocab_is_eog(st->vocab, id)) {
+            break;
+        }
+        std::string piece = token_to_piece(st->vocab, id);
+        out += piece;
+        n_tokens++;
+        if (!piece.empty()) {
+            std::vector<char> buf(piece.begin(), piece.end());
+            buf.push_back('\0');
+            if (tokenCallback(st, buf.data()) == 0) {
+                stop = true;
+            }
+        }
+        for (size_t a = 0; a < bp->antiprompt.size(); a++) {
+            const std::string &ap = bp->antiprompt[a];
+            if (!ap.empty() && out.size() >= ap.size() &&
+                out.compare(out.size() - ap.size(), ap.size(), ap) == 0) {
+                stop = true;
+                break;
+            }
+        }
+        if (stop) {
+            break;
+        }
+        llama_batch b = llama_batch_get_one(&id, 1);
+        if (llama_decode(st->ctx, b) != 0) {
+            break;
+        }
+        st->n_past++;
+    }
+    llama_sampler_free(smpl);
+    return 0;
+}
+
 } // namespace
 
 extern "C" {
@@ -236,77 +300,16 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     }
     (void)debug;
 
-    if (bp->n_threads > 0) {
-        llama_set_n_threads(st->ctx, bp->n_threads, bp->n_threads);
-    }
-
-    llama_memory_clear(llama_get_memory(st->ctx), true);
-    st->n_past = 0;
-
-    std::vector<llama_token> toks = tokenize(st->vocab, bp->prompt, true);
-    const int n_ctx = (int)llama_n_ctx(st->ctx);
-    if ((int)toks.size() >= n_ctx) {
-        result[0] = '\0';
-        return 1;
-    }
-    if (decode_tokens(st->ctx, toks, bp->n_batch) != 0) {
-        result[0] = '\0';
-        return 1;
-    }
-    st->n_past = (int)toks.size();
-
-    llama_sampler *smpl = make_sampler(bp);
-    if (smpl == nullptr) {
-        result[0] = '\0';
-        return 1;
-    }
-
     std::string out;
-    const int n_predict = bp->n_predict > 0 ? bp->n_predict : 128;
-    bool stop = false;
-
-    for (int i = 0; i < n_predict && st->n_past < n_ctx && !stop; i++) {
-        llama_token id = llama_sampler_sample(smpl, st->ctx, -1);
-        if (llama_vocab_is_eog(st->vocab, id)) {
-            break;
-        }
-
-        std::string piece = token_to_piece(st->vocab, id);
-        out += piece;
-
-        if (!piece.empty()) {
-            std::vector<char> buf(piece.begin(), piece.end());
-            buf.push_back('\0');
-            if (tokenCallback(st, buf.data()) == 0) {
-                stop = true;
-            }
-        }
-
-        for (size_t a = 0; a < bp->antiprompt.size(); a++) {
-            const std::string &ap = bp->antiprompt[a];
-            if (!ap.empty() && out.size() >= ap.size() &&
-                out.compare(out.size() - ap.size(), ap.size(), ap) == 0) {
-                stop = true;
-                break;
-            }
-        }
-        if (stop) {
-            break;
-        }
-
-        llama_batch b = llama_batch_get_one(&id, 1);
-        if (llama_decode(st->ctx, b) != 0) {
-            break;
-        }
-        st->n_past++;
+    int nt = 0;
+    if (generate(bp, st, out, nt) != 0) {
+        result[0] = '\0';
+        return 1;
     }
 
-    llama_sampler_free(smpl);
-
-    // The Go caller allocates `result` as make([]byte, tokens) — i.e. n_predict
-    // BYTES — but generated text can be several bytes per token. Bound the copy
-    // to avoid overflowing that buffer (callers that need the full text should
-    // accumulate via the token callback). Leave room for the NUL terminator.
+    // Legacy ABI: `result` is n_predict BYTES (Go make([]byte, tokens)), but text
+    // can be several bytes per token — bound the copy to avoid overflow. Prefer
+    // llama_predict_full for the complete text.
     size_t cap = bp->n_predict > 0 ? (size_t)bp->n_predict : 128;
     if (out.size() > cap - 1) {
         out.resize(cap - 1);
@@ -314,6 +317,39 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     std::memcpy(result, out.data(), out.size());
     result[out.size()] = '\0';
     return 0;
+}
+
+int llama_predict_full(void *params_ptr, void *state_pr, char *result, int result_size,
+                       int *n_tokens, bool debug) {
+    binding_params *bp = static_cast<binding_params *>(params_ptr);
+    binding_state  *st = static_cast<binding_state *>(state_pr);
+    if (n_tokens != nullptr) {
+        *n_tokens = 0;
+    }
+    if (bp == nullptr || st == nullptr || st->ctx == nullptr || result == nullptr || result_size <= 0) {
+        return -1;
+    }
+    (void)debug;
+
+    std::string out;
+    int nt = 0;
+    if (generate(bp, st, out, nt) != 0) {
+        result[0] = '\0';
+        return -1;
+    }
+    if (n_tokens != nullptr) {
+        *n_tokens = nt;
+    }
+
+    // Write up to result_size-1 bytes (NUL-terminated); return the FULL length so
+    // the caller can detect truncation and resize+retry.
+    size_t w = out.size();
+    if (w > (size_t)result_size - 1) {
+        w = (size_t)result_size - 1;
+    }
+    std::memcpy(result, out.data(), w);
+    result[w] = '\0';
+    return (int)out.size();
 }
 
 int apply_chat_template(void *state_pr, const char *system, const char *user, char *result, int result_size) {
