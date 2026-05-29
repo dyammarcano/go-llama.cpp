@@ -2,7 +2,10 @@
 // Adapted for github.com/go-skynet/go-llama.cpp.
 package gguf
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Info holds commonly-needed model facts, read without loading the model.
 type Info struct {
@@ -44,6 +47,7 @@ func Stat(path string) (*Info, error) {
 	return info, nil
 }
 
+// NOTE: extend fileTypeNames as the llama_ftype enum grows.
 // fileTypeNames maps the well-known llama_ftype enum values to labels.
 var fileTypeNames = map[uint32]string{
 	0:  "F32",
@@ -83,5 +87,5 @@ func quantLabel(ft uint32, f *File) string {
 	if bestN <= 0 {
 		return fmt.Sprintf("ftype_%d", ft)
 	}
-	return best.String()
+	return strings.ToUpper(best.String())
 }

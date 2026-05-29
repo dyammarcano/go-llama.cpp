@@ -35,3 +35,25 @@ func TestStatReadsCommonFields(t *testing.T) {
 		t.Errorf("Quantization = %q, want Q8_0", info.Quantization)
 	}
 }
+
+func TestStatQuantFallbackUppercase(t *testing.T) {
+	// file_type 99 is not in fileTypeNames, forcing the dominant-tensor fallback.
+	path := writeGGUF(t,
+		[]kvPair{
+			{"general.architecture", "llama"},
+			{"general.file_type", uint32(99)},
+			{"llama.block_count", uint32(1)},
+		},
+		[]testTensor{
+			{Name: "blk.0.attn_q.weight", Type: 2, Shape: []uint64{32}, Data: make([]byte, 18)}, // Q4_0
+			{Name: "blk.0.attn_k.weight", Type: 2, Shape: []uint64{32}, Data: make([]byte, 18)}, // Q4_0
+		},
+	)
+	info, err := Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.Quantization != "Q4_0" {
+		t.Errorf("Quantization = %q, want Q4_0 (uppercase, from dominant tensor fallback)", info.Quantization)
+	}
+}
