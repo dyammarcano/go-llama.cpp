@@ -155,6 +155,7 @@ func writeGGUF(tb testing.TB, kvs []kvPair, tensors []testTensor) string {
 // never reads tensor data, so the file stays tiny.
 func sampleLlamaModel(tb testing.TB, n int) string {
 	tb.Helper()
+
 	kvs := []kvPair{
 		{"general.architecture", "llama"},
 		{"general.name", "tiny-llama-fixture"},
@@ -166,8 +167,9 @@ func sampleLlamaModel(tb testing.TB, n int) string {
 		{"llama.attention.value_length", uint32(8)},
 		{"llama.vocab_size", uint32(128)},
 	}
-	var tensors []testTensor
-	for i := 0; i < n; i++ {
+	tensors := make([]testTensor, 0, n+2)
+
+	for i := range n {
 		tensors = append(tensors, testTensor{
 			Name:  "blk." + strconv.Itoa(i) + ".attn.weight",
 			Type:  0, // F32
@@ -175,10 +177,12 @@ func sampleLlamaModel(tb testing.TB, n int) string {
 			Data:  nil, // shape-only; estimator reads NumBytes() from Shape
 		})
 	}
+
 	tensors = append(tensors,
 		testTensor{Name: "token_embd.weight", Type: 0, Shape: []uint64{128, 64}, Data: nil},
 		testTensor{Name: "output.weight", Type: 0, Shape: []uint64{64, 16}, Data: nil},
 	)
+
 	return writeGGUF(tb, kvs, tensors)
 }
 
@@ -187,10 +191,13 @@ func TestSampleLlamaModelOpens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer f.Close()
+
+	defer func() { _ = f.Close() }()
+
 	if f.NumTensors() != 6 { // 4 blocks + token_embd + output
 		t.Errorf("NumTensors() = %d, want 6", f.NumTensors())
 	}
+
 	if got := f.KeyValue("block_count").Uint(); got != 4 {
 		t.Errorf("block_count = %d, want 4", got)
 	}

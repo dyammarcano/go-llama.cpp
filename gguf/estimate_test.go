@@ -2,11 +2,14 @@ package gguf
 
 import (
 	"errors"
+	"os"
 	"testing"
 )
 
 func TestGroupLayers(t *testing.T) {
-	f, err := Open(sampleLlamaModel(t, 4))
+	const nBlocks = 3
+
+	f, err := Open(sampleLlamaModel(t, nBlocks))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -14,11 +17,11 @@ func TestGroupLayers(t *testing.T) {
 	defer func() { _ = f.Close() }()
 
 	blocks, output := groupLayers(f)
-	if len(blocks) != 4 {
-		t.Fatalf("blocks = %d, want 4", len(blocks))
+	if len(blocks) != nBlocks {
+		t.Fatalf("blocks = %d, want %d", len(blocks), nBlocks)
 	}
 
-	for i := range 4 {
+	for i := range nBlocks {
 		if blocks[i] != 4096 { // [64,16] F32
 			t.Errorf("blocks[%d] = %d, want 4096", i, blocks[i])
 		}
@@ -221,4 +224,27 @@ func TestEstimateNumParallelDoublesKV(t *testing.T) {
 	if est2.KVCache != 2*est1.KVCache {
 		t.Errorf("NumParallel=2 KVCache = %d, want double of %d", est2.KVCache, est1.KVCache)
 	}
+}
+
+func TestEstimateRealModel(t *testing.T) {
+	path := os.Getenv("LLMARK_TEST_GGUF")
+	if path == "" {
+		t.Skip("set LLMARK_TEST_GGUF to a .gguf file to run this test")
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("LLMARK_TEST_GGUF not readable: %v", err)
+	}
+
+	est, err := EstimateLayers(path, EstimateOptions{NumCtx: 4096, FreeVRAM: 3500 << 20})
+	if err != nil {
+		t.Fatalf("EstimateLayers(%s): %v", path, err)
+	}
+
+	if est.Layers < 0 || est.Layers > len(est.PerLayerBytes) {
+		t.Errorf("Layers = %d out of range 0..%d", est.Layers, len(est.PerLayerBytes))
+	}
+
+	t.Logf("layers=%d fullyOffloaded=%v weights=%dMiB kv=%dMiB graph=%dMiB approx=%v",
+		est.Layers, est.FullyOffloaded, est.Weights>>20, est.KVCache>>20, est.Graph>>20, est.Approximate)
 }

@@ -22,5 +22,6 @@ func llamaGraphSize(embedding, heads, embeddingHeads, headsKV, context, batch, v
 			4*context*(batch*heads+embeddingHeads*headsKV),
 		4*batch*(embedding+vocab)+embedding*vocab*105/128,
 	)
+
 	return full, partial
 }
