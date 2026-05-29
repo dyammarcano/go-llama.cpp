@@ -30,7 +30,6 @@ var _ = Describe("LLama binding", func() {
 			)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(model).ToNot(BeNil())
-
 			return model, err
 		}
 
@@ -51,7 +50,6 @@ how much is 2+2?
 			if testModelPath == "" {
 				Skip("test skipped - only makes sense if the TEST_MODEL environment variable is set.")
 			}
-
 			model, err := New(
 				testModelPath,
 				EnableF16Memory,
@@ -62,7 +60,6 @@ how much is 2+2?
 			)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(model).ToNot(BeNil())
-
 			model2, err := New(
 				testModelPath,
 				EnableF16Memory,
@@ -104,7 +101,6 @@ how much is 2+2?
 			)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(model).ToNot(BeNil())
-
 			return model, err
 		}
 

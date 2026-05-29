@@ -1,4 +1,5 @@
 //go:build openblas
+// +build openblas
 
 package llama
 
