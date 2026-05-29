@@ -90,11 +90,12 @@ type Info struct {
     NumTensors      int
 }
 
-// Info opens path, reads common metadata, and closes the file.
-func Info(path string) (*Info, error)
+// Stat opens path, reads common metadata, and closes the file.
+// (Named Stat, not Info, to avoid colliding with the Info type — mirrors os.Stat.)
+func Stat(path string) (*Info, error)
 ```
 
-`Info` uses `File.KeyValue`'s arch-prefixing so `"context_length"` resolves to
+`Stat` uses `File.KeyValue`'s arch-prefixing so `"context_length"` resolves to
 `<arch>.context_length` automatically. Missing keys yield zero values, not
 errors (GGUFs vary by architecture).
 
