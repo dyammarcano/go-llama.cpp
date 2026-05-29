@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -141,6 +142,58 @@ func writeGGUF(tb testing.TB, kvs []kvPair, tensors []testTensor) string {
 	}
 
 	return path
+}
+
+// sampleLlamaModel builds an n-block llama-arch GGUF fixture with known sizes.
+// Each block has one F32 weight tensor of shape [64,16] => 64*16*4 = 4096 bytes.
+// The output tensor is [64,16] => 4096 bytes. token_embd is present (tied).
+// Metadata uses tiny dims so graph/KV are hand-computable in estimate_test.go:
+//
+//	embedding=64 head_count=8 head_count_kv=8 key_length=8 value_length=8 vocab=128
+//
+// Tensor Data is left empty: NumBytes() comes from Shape, and the estimator
+// never reads tensor data, so the file stays tiny.
+func sampleLlamaModel(tb testing.TB, n int) string {
+	tb.Helper()
+	kvs := []kvPair{
+		{"general.architecture", "llama"},
+		{"general.name", "tiny-llama-fixture"},
+		{"llama.block_count", uint32(n)},
+		{"llama.embedding_length", uint32(64)},
+		{"llama.attention.head_count", uint32(8)},
+		{"llama.attention.head_count_kv", uint32(8)},
+		{"llama.attention.key_length", uint32(8)},
+		{"llama.attention.value_length", uint32(8)},
+		{"llama.vocab_size", uint32(128)},
+	}
+	var tensors []testTensor
+	for i := 0; i < n; i++ {
+		tensors = append(tensors, testTensor{
+			Name:  "blk." + strconv.Itoa(i) + ".attn.weight",
+			Type:  0, // F32
+			Shape: []uint64{64, 16},
+			Data:  nil, // shape-only; estimator reads NumBytes() from Shape
+		})
+	}
+	tensors = append(tensors,
+		testTensor{Name: "token_embd.weight", Type: 0, Shape: []uint64{128, 64}, Data: nil},
+		testTensor{Name: "output.weight", Type: 0, Shape: []uint64{64, 16}, Data: nil},
+	)
+	return writeGGUF(tb, kvs, tensors)
+}
+
+func TestSampleLlamaModelOpens(t *testing.T) {
+	f, err := Open(sampleLlamaModel(t, 4))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close()
+	if f.NumTensors() != 6 { // 4 blocks + token_embd + output
+		t.Errorf("NumTensors() = %d, want 6", f.NumTensors())
+	}
+	if got := f.KeyValue("block_count").Uint(); got != 4 {
+		t.Errorf("block_count = %d, want 4", got)
+	}
 }
 
 // sampleModel returns a small llama-arch fixture used across tests.
