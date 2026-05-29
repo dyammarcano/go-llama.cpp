@@ -64,6 +64,25 @@ info, err := gguf.Stat("model.gguf")
 For lower-level access (per-tensor shapes/types, raw key-values), use
 `gguf.Open` and the `*gguf.File` accessors.
 
+## Estimating GPU layers (no model load)
+
+`gguf.EstimateLayers` computes how many transformer layers fit in a VRAM budget
+— pure Go, no cgo, no GPU calls (the caller supplies the budget):
+
+```go
+import "github.com/go-skynet/go-llama.cpp/gguf"
+
+est, err := gguf.EstimateLayers("model.gguf", gguf.EstimateOptions{
+    NumCtx:   4096,
+    FreeVRAM: 3500 << 20, // ~3.5 GiB
+})
+// est.Layers (n_gpu_layers), est.FullyOffloaded, est.Weights/KVCache/Graph
+```
+
+It faithfully ports Ollama's Llama-family memory model (single-GPU). Non-Llama
+dense architectures get an approximate estimate (`est.Approximate == true`);
+recurrent/SSM architectures are not yet supported.
+
 ## Acceleration
 
 ### OpenBLAS
