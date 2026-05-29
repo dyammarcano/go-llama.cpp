@@ -1,5 +1,7 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
 // Adapted for github.com/go-skynet/go-llama.cpp.
+// Reformatted to satisfy this project's golangci-lint config; logic unchanged from upstream.
+
 package gguf
 
 import (
@@ -7,6 +9,7 @@ import (
 	"strings"
 )
 
+// TensorInfo holds the name, shape, type, and data offset for one tensor.
 type TensorInfo struct {
 	Name   string
 	Offset uint64
@@ -14,15 +17,18 @@ type TensorInfo struct {
 	Type   TensorType
 }
 
+// Valid reports whether the TensorInfo has a non-empty name and non-zero byte size.
 func (ti TensorInfo) Valid() bool {
 	return ti.Name != "" && ti.NumBytes() > 0
 }
 
+// NumValues returns the total number of scalar elements in the tensor.
 func (ti TensorInfo) NumValues() int64 {
 	var numItems int64 = 1
 	for _, dim := range ti.Shape {
 		numItems *= int64(dim)
 	}
+
 	return numItems
 }
 
@@ -31,6 +37,7 @@ func (ti TensorInfo) NumBytes() int64 {
 	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
 }
 
+// LogValue implements slog.LogValuer for structured logging.
 func (ti TensorInfo) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("name", ti.Name),
@@ -42,6 +49,7 @@ func (ti TensorInfo) LogValue() slog.Value {
 	)
 }
 
+// TensorType identifies the quantization or numeric format of a tensor.
 type TensorType uint32
 
 const (
@@ -101,12 +109,13 @@ const (
 	tensorTypeIQ4_NL_8_8
 )
 
+// NumBytes returns bytes-per-element as a float64 (may be fractional for block-quantized types).
 func (tt TensorType) NumBytes() float64 {
 	return float64(tt.typeSize()) / float64(tt.blockSize())
 }
 
 func (tt TensorType) typeSize() int64 {
-	switch tt {
+	switch tt { //nolint:exhaustive // default: 0 handles all unknown/unused tensor types
 	case TensorTypeF32:
 		return 4
 	case TensorTypeF16:
@@ -171,7 +180,7 @@ func (tt TensorType) typeSize() int64 {
 }
 
 func (tt TensorType) blockSize() int64 {
-	switch tt {
+	switch tt { //nolint:exhaustive // default: 256 handles all block-quantized types not explicitly listed
 	case TensorTypeF32,
 		TensorTypeF16,
 		TensorTypeI8,
@@ -194,6 +203,7 @@ func (tt TensorType) blockSize() int64 {
 	}
 }
 
+// String returns the lowercase name of the tensor type (e.g. "f32", "q4_0").
 func (tt TensorType) String() string {
 	switch tt {
 	case TensorTypeF32:
@@ -279,6 +289,7 @@ func (tt TensorType) String() string {
 	}
 }
 
+// LogValue implements slog.LogValuer for structured logging.
 func (tt TensorType) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Uint64("value", uint64(tt)),

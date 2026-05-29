@@ -41,6 +41,7 @@ func writeStr(b *bytes.Buffer, s string) {
 
 func wValue(tb testing.TB, b *bytes.Buffer, v any) {
 	le := binary.LittleEndian
+
 	switch x := v.(type) {
 	case uint32:
 		_ = binary.Write(b, le, wUint32)
@@ -63,6 +64,7 @@ func wValue(tb testing.TB, b *bytes.Buffer, v any) {
 	case []string:
 		_ = binary.Write(b, le, wArray)
 		_ = binary.Write(b, le, wStr)
+
 		_ = binary.Write(b, le, uint64(len(x)))
 		for _, s := range x {
 			writeStr(b, s)
@@ -71,6 +73,7 @@ func wValue(tb testing.TB, b *bytes.Buffer, v any) {
 		_ = binary.Write(b, le, wArray)
 		_ = binary.Write(b, le, wInt32)
 		_ = binary.Write(b, le, uint64(len(x)))
+
 		for _, e := range x {
 			_ = binary.Write(b, le, e)
 		}
@@ -84,20 +87,24 @@ func alignUp(n, a uint64) uint64 { return (n + a - 1) / a * a }
 // writeGGUF serializes a minimal valid GGUF v3 file and returns its path.
 func writeGGUF(tb testing.TB, kvs []kvPair, tensors []testTensor) string {
 	tb.Helper()
+
 	le := binary.LittleEndian
+
 	const alignment = 32
 
 	b := new(bytes.Buffer)
 	b.WriteString("GGUF")
 	_ = binary.Write(b, le, uint32(3))            // version
 	_ = binary.Write(b, le, uint64(len(tensors))) // tensor count
-	_ = binary.Write(b, le, uint64(len(kvs)))     // kv count
+
+	_ = binary.Write(b, le, uint64(len(kvs))) // kv count
 	for _, kv := range kvs {
 		writeStr(b, kv.Key)
 		wValue(tb, b, kv.Val)
 	}
 
 	offsets := make([]uint64, len(tensors))
+
 	var dataLen uint64
 	for i, t := range tensors {
 		dataLen = alignUp(dataLen, alignment)
@@ -107,10 +114,12 @@ func writeGGUF(tb testing.TB, kvs []kvPair, tensors []testTensor) string {
 
 	for i, t := range tensors {
 		writeStr(b, t.Name)
+
 		_ = binary.Write(b, le, uint32(len(t.Shape)))
 		for _, d := range t.Shape {
 			_ = binary.Write(b, le, d)
 		}
+
 		_ = binary.Write(b, le, t.Type)
 		_ = binary.Write(b, le, offsets[i])
 	}
@@ -123,18 +132,21 @@ func writeGGUF(tb testing.TB, kvs []kvPair, tensors []testTensor) string {
 	for i, t := range tensors {
 		copy(data[offsets[i]:], t.Data)
 	}
+
 	b.Write(data)
 
 	path := filepath.Join(tb.TempDir(), "model.gguf")
 	if err := os.WriteFile(path, b.Bytes(), 0o600); err != nil {
 		tb.Fatal(err)
 	}
+
 	return path
 }
 
 // sampleModel returns a small llama-arch fixture used across tests.
 func sampleModel(tb testing.TB) string {
 	tb.Helper()
+
 	return writeGGUF(tb,
 		[]kvPair{
 			{"general.architecture", "llama"},

@@ -1,5 +1,6 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
 // Adapted for github.com/go-skynet/go-llama.cpp.
+// Reformatted to satisfy this project's golangci-lint config; logic unchanged from upstream.
 
 package gguf
 
@@ -41,7 +42,9 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 		}
 
 		if it.successFunc != nil {
-			it.successFunc()
+			if err := it.successFunc(); err != nil {
+				slog.Error("successFunc failed", "error", err)
+			}
 		}
 	})
 
@@ -82,6 +85,7 @@ func (g *lazy[T]) All() iter.Seq2[int, T] {
 func (g *lazy[T]) rest() (collected bool) {
 	for {
 		_, ok := g.next()
+
 		collected = collected || ok
 		if !ok {
 			break

@@ -1,5 +1,6 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
 // Adapted for github.com/go-skynet/go-llama.cpp.
+// Reformatted to satisfy this project's golangci-lint config; logic unchanged from upstream.
 
 package gguf
 
@@ -32,8 +33,10 @@ const (
 	typeFloat64
 )
 
+// ErrUnsupported is returned when a GGUF file has an unsupported magic, version, or type.
 var ErrUnsupported = errors.New("unsupported")
 
+// File holds an open GGUF file and its lazily-decoded key-value and tensor metadata.
 type File struct {
 	Magic   [4]byte
 	Version uint32
@@ -47,50 +50,44 @@ type File struct {
 	bts    []byte
 }
 
-func Open(path string) (f *File, err error) {
-	f = &File{bts: make([]byte, 4096)}
-	f.file, err = os.Open(path)
+// Open opens the GGUF file at path, validates the magic bytes and version,
+// and prepares lazy iterators for key-value pairs and tensor metadata.
+// The caller must call Close when done.
+func Open(path string) (*File, error) {
+	f := &File{bts: make([]byte, 4096)}
+
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// close the file (and stop any in-progress lazy iterators) on any error
-	// so callers and Windows temp-dir cleanup are not blocked.
-	defer func() {
-		if err != nil && f != nil {
-			if f.tensors != nil && f.tensors.stop != nil {
-				f.tensors.stop()
-			}
-			if f.keyValues != nil && f.keyValues.stop != nil {
-				f.keyValues.stop()
-			}
-			_ = f.file.Close()
-		}
-	}()
-
+	f.file = file
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err = binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
-		return
+		_ = file.Close()
+		return nil, err
 	}
 
 	if !bytes.Equal(f.Magic[:], []byte("GGUF")) {
-		err = fmt.Errorf("%w: bad magic %q", ErrUnsupported, f.Magic[:])
-		return
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: bad magic %q", ErrUnsupported, f.Magic[:])
 	}
 
 	if err = binary.Read(f.reader, binary.LittleEndian, &f.Version); err != nil {
-		return
+		_ = file.Close()
+		return nil, err
 	}
 
 	if f.Version < 2 {
-		err = fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
-		return
+		_ = file.Close()
+		return nil, fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
 	}
 
 	f.tensors, err = newLazy(f, f.readTensor)
 	if err != nil {
-		return
+		_ = file.Close()
+		return nil, err
 	}
 
 	f.tensors.successFunc = func() error {
@@ -98,12 +95,14 @@ func Open(path string) (f *File, err error) {
 
 		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
 		f.offset = offset + (alignment-offset%alignment)%alignment
+
 		return nil
 	}
 
 	f.keyValues, err = newLazy(f, f.readKeyValue)
 	if err != nil {
-		return
+		_ = file.Close()
+		return nil, err
 	}
 
 	return f, nil
@@ -292,12 +291,16 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 	return s, nil
 }
 
+// Close stops all lazy iterators and closes the underlying file.
 func (f *File) Close() error {
 	f.keyValues.stop()
 	f.tensors.stop()
+
 	return f.file.Close()
 }
 
+// KeyValue looks up a metadata key-value pair by key.
+// Keys without a namespace prefix are qualified with the model's architecture.
 func (f *File) KeyValue(key string) KeyValue {
 	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") {
 		key = f.KeyValue("general.architecture").String() + "." + key
@@ -318,14 +321,17 @@ func (f *File) KeyValue(key string) KeyValue {
 	return KeyValue{}
 }
 
+// NumKeyValues returns the total number of key-value pairs declared in the file.
 func (f *File) NumKeyValues() int {
 	return int(f.keyValues.count)
 }
 
+// KeyValues returns an iterator over all key-value pairs in the file.
 func (f *File) KeyValues() iter.Seq2[int, KeyValue] {
 	return f.keyValues.All()
 }
 
+// TensorInfo looks up tensor metadata by name, exhausting key-values first if needed.
 func (f *File) TensorInfo(name string) TensorInfo {
 	if index := slices.IndexFunc(f.tensors.values, func(t TensorInfo) bool {
 		return t.Name == name
@@ -344,16 +350,20 @@ func (f *File) TensorInfo(name string) TensorInfo {
 	return TensorInfo{}
 }
 
+// NumTensors returns the total number of tensors declared in the file.
 func (f *File) NumTensors() int {
 	return int(f.tensors.count)
 }
 
+// TensorInfos returns an iterator over all tensor info entries in the file.
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
 	f.keyValues.rest()
+
 	return f.tensors.All()
 }
 
+// TensorReader returns the TensorInfo and an io.Reader for the named tensor's data.
 func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 	t := f.TensorInfo(name)
 	if t.NumBytes() == 0 {
@@ -362,5 +372,6 @@ func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 
 	// fast forward through tensor info if we haven't already
 	_ = f.tensors.rest()
+
 	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), t.NumBytes()), nil
 }

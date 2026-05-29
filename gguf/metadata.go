@@ -1,5 +1,6 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
 // Adapted for github.com/go-skynet/go-llama.cpp.
+
 package gguf
 
 import (
@@ -29,7 +30,7 @@ func Stat(path string) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close; error would shadow the real result
 
 	info := &Info{
 		Architecture:    f.KeyValue("general.architecture").String(),
@@ -44,6 +45,7 @@ func Stat(path string) (*Info, error) {
 		NumTensors:      f.NumTensors(),
 	}
 	info.Quantization = quantLabel(info.FileType, f)
+
 	return info, nil
 }
 
@@ -74,18 +76,22 @@ func quantLabel(ft uint32, f *File) string {
 	if name, ok := fileTypeNames[ft]; ok {
 		return name
 	}
+
 	counts := map[TensorType]int{}
 	for _, ti := range f.TensorInfos() {
 		counts[ti.Type]++
 	}
+
 	best, bestN := TensorType(0), -1
 	for tt, n := range counts {
 		if n > bestN {
 			best, bestN = tt, n
 		}
 	}
+
 	if bestN <= 0 {
 		return fmt.Sprintf("ftype_%d", ft)
 	}
+
 	return strings.ToUpper(best.String())
 }

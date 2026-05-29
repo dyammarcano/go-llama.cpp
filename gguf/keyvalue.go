@@ -1,5 +1,8 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
 // Adapted for github.com/go-skynet/go-llama.cpp.
+// Reformatted to satisfy this project's golangci-lint config; logic unchanged from upstream.
+
+// Package gguf reads and parses GGUF model-file headers without loading tensor data.
 package gguf
 
 import (
@@ -7,15 +10,19 @@ import (
 	"slices"
 )
 
+// KeyValue holds a single GGUF metadata key-value pair.
 type KeyValue struct {
-	Key string
 	Value
+
+	Key string
 }
 
+// Valid reports whether the KeyValue has a non-empty key and a non-nil value.
 func (kv KeyValue) Valid() bool {
-	return kv.Key != "" && kv.Value.value != nil
+	return kv.Key != "" && kv.value != nil
 }
 
+// Value wraps an arbitrary GGUF metadata value.
 type Value struct {
 	value any
 }
@@ -25,19 +32,19 @@ func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 	if slices.Contains(kinds, vv.Kind()) {
 		t = vv.Convert(reflect.TypeOf(t)).Interface().(T)
 	}
+
 	return
 }
 
 func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
-	switch vv := reflect.ValueOf(v.value); vv.Kind() {
-	case reflect.Slice:
-		if slices.Contains(kinds, vv.Type().Elem().Kind()) {
-			ts = make([]T, vv.Len())
-			for i := range vv.Len() {
-				ts[i] = vv.Index(i).Convert(reflect.TypeOf(ts[i])).Interface().(T)
-			}
+	vv := reflect.ValueOf(v.value)
+	if vv.Kind() == reflect.Slice && slices.Contains(kinds, vv.Type().Elem().Kind()) {
+		ts = make([]T, vv.Len())
+		for i := range vv.Len() {
+			ts[i] = vv.Index(i).Convert(reflect.TypeOf(ts[i])).Interface().(T)
 		}
 	}
+
 	return
 }
 
