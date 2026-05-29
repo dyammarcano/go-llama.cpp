@@ -1,4 +1,4 @@
-//go:build windows && !cuda
+//go:build windows && !cuda && !vulkan
 
 package llama
 
