@@ -5,6 +5,7 @@ package gguf
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -88,8 +89,10 @@ func orDefault(v, def int) int {
 	return v
 }
 
-// EstimateLayers opens path, reads metadata + tensor sizes, computes the
-// estimate, and closes the file. (Full fit logic added in the next task.)
+// EstimateLayers opens path, reads metadata + tensor sizes, computes how many
+// transformer blocks fit in opts.FreeVRAM, and closes the file. Single-GPU,
+// Llama-family graph model; non-llama dense architectures get an approximate
+// estimate (Estimate.Approximate). Recurrent/SSM architectures are unsupported.
 func EstimateLayers(path string, opts EstimateOptions) (*Estimate, error) {
 	if opts.FreeVRAM == 0 {
 		return nil, fmt.Errorf("%w: FreeVRAM budget required", ErrUnsupported)
@@ -99,5 +102,93 @@ func EstimateLayers(path string, opts EstimateOptions) (*Estimate, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return &Estimate{}, nil
+
+	arch := f.KeyValue("general.architecture").String()
+	blockCount := int(f.KeyValue("block_count").Uint())
+	embedding := f.KeyValue("embedding_length").Uint()
+	if blockCount == 0 || embedding == 0 {
+		return nil, fmt.Errorf("%w: missing block_count/embedding_length", ErrUnsupported)
+	}
+	heads := f.KeyValue("attention.head_count").Uint()
+	if heads == 0 {
+		return nil, fmt.Errorf("%w: recurrent or unsupported architecture (no attention heads)", ErrUnsupported)
+	}
+	headsKV := f.KeyValue("attention.head_count_kv").Uint()
+	if headsKV == 0 {
+		headsKV = heads
+	}
+	keyLen := f.KeyValue("attention.key_length").Uint()
+	if keyLen == 0 {
+		keyLen = embedding / heads
+	}
+	valLen := f.KeyValue("attention.value_length").Uint()
+	if valLen == 0 {
+		valLen = embedding / heads
+	}
+	vocab := f.KeyValue("vocab_size").Uint()
+	if vocab == 0 {
+		vocab = uint64(len(f.KeyValue("tokenizer.ggml.tokens").Strings()))
+	}
+
+	ctx := uint64(orDefault(opts.NumCtx, 2048)) * uint64(orDefault(opts.NumParallel, 1))
+	batch := uint64(orDefault(opts.BatchSize, 512))
+
+	blocks, output := groupLayers(f)
+	kvPerLayer := uint64(float64(ctx*(keyLen+valLen)*headsKV) * kvBytesPerElement(opts.KVCacheType))
+	full, partial := llamaGraphSize(embedding, heads, keyLen, headsKV, ctx, batch, vocab)
+
+	perLayer := make([]uint64, blockCount)
+	for i := 0; i < blockCount; i++ {
+		perLayer[i] = blocks[i] + kvPerLayer
+	}
+
+	minReserve := opts.MinReserveBytes
+	if minReserve == 0 {
+		minReserve = DefaultMinReserveBytes
+	}
+	reserve := minReserve + opts.OverheadBytes
+
+	est := &Estimate{PerLayerBytes: perLayer, Approximate: arch != "llama"}
+
+	// fill repeating blocks largest-cost-first while they fit under the
+	// partial-offload graph budget. Dense blocks are equal-sized, so order only
+	// matters under heterogeneity; largest-first biases conservative.
+	order := make([]int, blockCount)
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return perLayer[order[a]] > perLayer[order[b]] })
+
+	avail := int64(opts.FreeVRAM) - int64(reserve) - int64(partial)
+	var weightsUsed, kvUsed uint64
+	n := 0
+	if avail > 0 {
+		for _, i := range order {
+			if int64(weightsUsed+kvUsed+perLayer[i]) <= avail {
+				weightsUsed += blocks[i]
+				kvUsed += kvPerLayer
+				n++
+			} else {
+				break
+			}
+		}
+	}
+
+	est.Layers = n
+	est.Graph = partial
+
+	if n == blockCount {
+		// all blocks fit: try to also offload the output layer under the
+		// (larger) full-offload graph budget.
+		if int64(opts.FreeVRAM)-int64(reserve)-int64(full)-int64(weightsUsed+kvUsed+output) >= 0 {
+			est.FullyOffloaded = true
+			est.Graph = full
+			weightsUsed += output
+		}
+	}
+
+	est.Weights = weightsUsed
+	est.KVCache = kvUsed
+	est.TotalVRAM = est.Weights + est.KVCache + est.Graph
+	return est, nil
 }
