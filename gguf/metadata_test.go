@@ -1,6 +1,9 @@
 package gguf
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestStatReadsCommonFields(t *testing.T) {
 	info, err := Stat(sampleModel(t))
@@ -34,6 +37,32 @@ func TestStatReadsCommonFields(t *testing.T) {
 	if info.Quantization != "Q8_0" {
 		t.Errorf("Quantization = %q, want Q8_0", info.Quantization)
 	}
+}
+
+// TestStatRealModel parses an actual GGUF if one is available locally.
+// Set LLMARK_TEST_GGUF to a .gguf path to enable; skipped otherwise.
+func TestStatRealModel(t *testing.T) {
+	path := os.Getenv("LLMARK_TEST_GGUF")
+	if path == "" {
+		t.Skip("set LLMARK_TEST_GGUF to a .gguf file to run this test")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("LLMARK_TEST_GGUF not readable: %v", err)
+	}
+
+	info, err := Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s): %v", path, err)
+	}
+	if info.Architecture == "" {
+		t.Error("Architecture empty — metadata parse likely failed")
+	}
+	if info.NumTensors == 0 {
+		t.Error("NumTensors = 0 — tensor block parse likely failed")
+	}
+	t.Logf("arch=%s name=%q ctx=%d embd=%d blocks=%d quant=%s tensors=%d",
+		info.Architecture, info.Name, info.ContextLength, info.EmbeddingLength,
+		info.BlockCount, info.Quantization, info.NumTensors)
 }
 
 func TestStatQuantFallbackUppercase(t *testing.T) {

@@ -4,6 +4,7 @@
 package gguf
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -68,5 +69,51 @@ func TestOpenRejectsBadMagic(t *testing.T) {
 	_, err := Open(path)
 	if !errors.Is(err, ErrUnsupported) {
 		t.Errorf("Open(bad magic) err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestTensorReaderMultiOffset(t *testing.T) {
+	// Two F32 tensors with distinct sentinel bytes. The second tensor's data
+	// offset must be the first tensor's size (24) aligned up to 32 -> 32.
+	path := writeGGUF(t,
+		[]kvPair{{"general.architecture", "llama"}},
+		[]testTensor{
+			{Name: "a", Type: 0, Shape: []uint64{2, 3}, Data: bytes.Repeat([]byte{0x11}, 24)},
+			{Name: "b", Type: 0, Shape: []uint64{1, 4}, Data: bytes.Repeat([]byte{0x22}, 16)},
+		},
+	)
+	f, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer f.Close()
+
+	bi := f.TensorInfo("b")
+	if bi.Offset != 32 {
+		t.Errorf("tensor b Offset = %d, want 32", bi.Offset)
+	}
+
+	_, rb, err := f.TensorReader("b")
+	if err != nil {
+		t.Fatalf("TensorReader(b): %v", err)
+	}
+	db, err := io.ReadAll(rb)
+	if err != nil {
+		t.Fatalf("ReadAll(b): %v", err)
+	}
+	if len(db) != 16 || db[0] != 0x22 || db[15] != 0x22 {
+		t.Errorf("tensor b data wrong: len=%d first=%#x last=%#x", len(db), db[0], db[len(db)-1])
+	}
+
+	_, ra, err := f.TensorReader("a")
+	if err != nil {
+		t.Fatalf("TensorReader(a): %v", err)
+	}
+	da, err := io.ReadAll(ra)
+	if err != nil {
+		t.Fatalf("ReadAll(a): %v", err)
+	}
+	if len(da) != 24 || da[0] != 0x11 || da[23] != 0x11 {
+		t.Errorf("tensor a data wrong: len=%d", len(da))
 	}
 }

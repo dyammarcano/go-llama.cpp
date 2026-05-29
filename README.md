@@ -48,6 +48,22 @@ go run -tags cuda ./examples -m "/model/path/here"      # CUDA (ship the build-c
 
 Other targets: `task test`, `task fmt`, `task fix`, `task lint`, `task clean`.
 
+## Reading GGUF metadata (no model load)
+
+The `gguf` subpackage reads model metadata and tensor info in pure Go — no cgo,
+no llama.cpp, no GPU:
+
+```go
+import "github.com/go-skynet/go-llama.cpp/gguf"
+
+info, err := gguf.Stat("model.gguf")
+// info.Architecture, info.ContextLength, info.BlockCount,
+// info.Quantization, info.ChatTemplate, info.NumTensors, ...
+```
+
+For lower-level access (per-tensor shapes/types, raw key-values), use
+`gguf.Open` and the `*gguf.File` accessors.
+
 ## Acceleration
 
 ### OpenBLAS
