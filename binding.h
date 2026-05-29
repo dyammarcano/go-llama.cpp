@@ -54,6 +54,12 @@ int llama_tokenize_string(void* params_ptr, void* state_pr, int* result);
 
 int llama_predict(void* params_ptr, void* state_pr, char* result, bool debug);
 
+// apply_chat_template formats (system,user) using the model's embedded GGUF
+// chat template into result (capacity result_size). Returns the formatted
+// length, or a negative/larger-than-capacity value if the buffer is too small.
+// If the model has no template, returns 0 (caller should fall back to raw).
+int apply_chat_template(void* state_pr, const char* system, const char* user, char* result, int result_size);
+
 #ifdef __cplusplus
 }
 

@@ -1,25 +1,23 @@
-// go-llama.cpp binding — MODERNIZATION STEPS 2-3.
+// go-llama.cpp binding — pure C llama.h API (no libcommon).
 //
-// Real implementation against current llama.cpp (submodule 19e92c33). The C ABI
-// in binding.h is unchanged, so llama.go is untouched. Sampling is delegated to
-// common_sampler (common/sampling.h); generation uses llama_decode + the
-// llama_batch_get_one helper. Embeddings, state save/load and speculative
-// sampling remain stubs (step 4 / deferred) — see docs/MODERNIZATION-SCOPE.md.
+// Uses only the C API exported by llama.dll/libllama, so the MinGW cgo host can
+// link against an MSVC-built llama.dll (CUDA) as well as a MinGW static build.
+// Sampling is a hand-built llama_sampler chain; tokenize/detokenize use the raw
+// llama_tokenize / llama_token_to_piece. The C ABI in binding.h is unchanged.
+//
+// Generation: load_model, eval, llama_predict, llama_tokenize_string.
+// Embeddings, state save/load and speculative sampling are stubs.
 
 #include "binding.h"
-#include "common.h"
-#include "sampling.h"
 #include "llama.h"
 
-#include <algorithm>
-#include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
 
 namespace {
 
-// Opaque handle returned by load_model and threaded back through state_pr.
 struct binding_state {
     llama_model       *model  = nullptr;
     llama_context     *ctx    = nullptr;
@@ -27,31 +25,88 @@ struct binding_state {
     int                n_past = 0;
 };
 
-// Opaque handle returned by llama_allocate_params.
 struct binding_params {
     std::string prompt;
     int         n_predict = 128;
     int         n_keep    = 0;
     int         n_batch   = 512;
     int         n_threads = 0;
+
+    uint32_t seed            = LLAMA_DEFAULT_SEED;
+    int32_t  top_k           = 40;
+    float    top_p           = 0.95f;
+    float    temp            = 0.80f;
+    int32_t  penalty_last_n  = 64;
+    float    penalty_repeat  = 1.00f;
+    float    penalty_freq    = 0.00f;
+    float    penalty_present = 0.00f;
+
     std::vector<std::string> antiprompt;
-    common_params_sampling   sparams;
 };
 
-// Decode a token span in n_batch chunks. Position is tracked automatically by
-// llama_decode. Returns 0 on success.
 int decode_tokens(llama_context *ctx, const std::vector<llama_token> &toks, int n_batch) {
     if (n_batch <= 0) {
         n_batch = 512;
     }
     for (size_t i = 0; i < toks.size(); i += (size_t)n_batch) {
-        const int n = (int)std::min((size_t)n_batch, toks.size() - i);
+        int n = (int)(toks.size() - i);
+        if (n > n_batch) {
+            n = n_batch;
+        }
         llama_batch b = llama_batch_get_one(const_cast<llama_token *>(toks.data() + i), n);
         if (llama_decode(ctx, b) != 0) {
             return 1;
         }
     }
     return 0;
+}
+
+std::vector<llama_token> tokenize(const llama_vocab *vocab, const std::string &text, bool add_special) {
+    if (vocab == nullptr) {
+        return {};
+    }
+    int32_t need = llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), nullptr, 0, add_special, true);
+    if (need < 0) {
+        need = -need;
+    }
+    std::vector<llama_token> toks((size_t)need);
+    int32_t got = llama_tokenize(vocab, text.c_str(), (int32_t)text.size(), toks.data(), need, add_special, true);
+    if (got < 0) {
+        return {};
+    }
+    toks.resize((size_t)got);
+    return toks;
+}
+
+std::string token_to_piece(const llama_vocab *vocab, llama_token id) {
+    char buf[256];
+    int32_t n = llama_token_to_piece(vocab, id, buf, (int32_t)sizeof(buf), 0, false);
+    if (n < 0) {
+        return std::string();
+    }
+    return std::string(buf, (size_t)n);
+}
+
+llama_sampler *make_sampler(const binding_params *bp) {
+    llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    if (bp->penalty_last_n != 0 &&
+        (bp->penalty_repeat != 1.0f || bp->penalty_freq != 0.0f || bp->penalty_present != 0.0f)) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_penalties(
+            bp->penalty_last_n, bp->penalty_repeat, bp->penalty_freq, bp->penalty_present));
+    }
+    if (bp->temp <= 0.0f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    } else {
+        if (bp->top_k > 0) {
+            llama_sampler_chain_add(smpl, llama_sampler_init_top_k(bp->top_k));
+        }
+        if (bp->top_p < 1.0f) {
+            llama_sampler_chain_add(smpl, llama_sampler_init_top_p(bp->top_p, 1));
+        }
+        llama_sampler_chain_add(smpl, llama_sampler_init_temp(bp->temp));
+        llama_sampler_chain_add(smpl, llama_sampler_init_dist(bp->seed));
+    }
+    return smpl;
 }
 
 } // namespace
@@ -95,7 +150,6 @@ void *load_model(const char *fname, int n_ctx, int n_seed, bool memory_f16,
     st->model = model;
     st->ctx   = ctx;
     st->vocab = llama_model_get_vocab(model);
-    st->n_past = 0;
     return st;
 }
 
@@ -120,10 +174,11 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
                             const char *maingpu, const char *tensorsplit, bool prompt_cache_ro,
                             const char *grammar, float rope_freq_base, float rope_freq_scale,
                             float negative_prompt_scale, const char *negative_prompt, int n_draft) {
-    (void)memory_f16; (void)penalize_nl; (void)logit_bias; (void)session_file;
-    (void)prompt_cache_all; (void)mlock; (void)mmap; (void)maingpu; (void)tensorsplit;
-    (void)prompt_cache_ro; (void)rope_freq_base; (void)rope_freq_scale;
-    (void)negative_prompt_scale; (void)negative_prompt; (void)n_draft; (void)tfs_z;
+    (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)typical_p; (void)mirostat;
+    (void)mirostat_eta; (void)mirostat_tau; (void)penalize_nl; (void)logit_bias;
+    (void)session_file; (void)prompt_cache_all; (void)mlock; (void)mmap; (void)maingpu;
+    (void)tensorsplit; (void)prompt_cache_ro; (void)grammar; (void)rope_freq_base;
+    (void)rope_freq_scale; (void)negative_prompt_scale; (void)negative_prompt; (void)n_draft;
 
     binding_params *p = new binding_params();
     p->prompt    = prompt ? std::string(prompt) : std::string();
@@ -131,25 +186,16 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
     p->n_predict = tokens;
     p->n_batch   = n_batch > 0 ? n_batch : 512;
     p->n_keep    = n_keep;
-
     if (seed >= 0) {
-        p->sparams.seed = (uint32_t)seed;
+        p->seed = (uint32_t)seed;
     }
-    p->sparams.top_k           = top_k;
-    p->sparams.top_p           = top_p;
-    p->sparams.typ_p           = typical_p;
-    p->sparams.temp            = temp;
-    p->sparams.penalty_last_n  = repeat_last_n;
-    p->sparams.penalty_repeat  = repeat_penalty;
-    p->sparams.penalty_freq    = frequency_penalty;
-    p->sparams.penalty_present = presence_penalty;
-    p->sparams.mirostat        = mirostat;
-    p->sparams.mirostat_eta    = mirostat_eta;
-    p->sparams.mirostat_tau    = mirostat_tau;
-    p->sparams.ignore_eos      = ignore_eos;
-    if (grammar != nullptr && grammar[0] != '\0') {
-        p->sparams.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, std::string(grammar));
-    }
+    p->top_k           = top_k;
+    p->top_p           = top_p;
+    p->temp            = temp;
+    p->penalty_last_n  = repeat_last_n;
+    p->penalty_repeat  = repeat_penalty;
+    p->penalty_freq    = frequency_penalty;
+    p->penalty_present = presence_penalty;
 
     if (antiprompt != nullptr && antiprompt_count > 0) {
         for (int i = 0; i < antiprompt_count; i++) {
@@ -174,9 +220,8 @@ int eval(void *params_ptr, void *state_pr, char *text) {
     if (bp != nullptr && bp->n_threads > 0) {
         llama_set_n_threads(st->ctx, bp->n_threads, bp->n_threads);
     }
-    std::vector<llama_token> toks =
-        common_tokenize(st->ctx, std::string(text), /*add_special*/ false, /*parse_special*/ true);
-    const int rc = decode_tokens(st->ctx, toks, bp ? bp->n_batch : 512);
+    std::vector<llama_token> toks = tokenize(st->vocab, std::string(text), false);
+    int rc = decode_tokens(st->ctx, toks, bp ? bp->n_batch : 512);
     if (rc == 0) {
         st->n_past += (int)toks.size();
     }
@@ -189,18 +234,16 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     if (bp == nullptr || st == nullptr || st->ctx == nullptr || result == nullptr) {
         return 1;
     }
+    (void)debug;
 
     if (bp->n_threads > 0) {
         llama_set_n_threads(st->ctx, bp->n_threads, bp->n_threads);
     }
 
-    // Fresh context for this prediction.
     llama_memory_clear(llama_get_memory(st->ctx), true);
     st->n_past = 0;
 
-    std::vector<llama_token> toks =
-        common_tokenize(st->ctx, bp->prompt, /*add_special*/ true, /*parse_special*/ true);
-
+    std::vector<llama_token> toks = tokenize(st->vocab, bp->prompt, true);
     const int n_ctx = (int)llama_n_ctx(st->ctx);
     if ((int)toks.size() >= n_ctx) {
         result[0] = '\0';
@@ -212,7 +255,7 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     }
     st->n_past = (int)toks.size();
 
-    common_sampler *smpl = common_sampler_init(st->model, bp->sparams);
+    llama_sampler *smpl = make_sampler(bp);
     if (smpl == nullptr) {
         result[0] = '\0';
         return 1;
@@ -223,21 +266,14 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
     bool stop = false;
 
     for (int i = 0; i < n_predict && st->n_past < n_ctx && !stop; i++) {
-        llama_token id = common_sampler_sample(smpl, st->ctx, -1);
-        common_sampler_accept(smpl, id, /*is_generated*/ true);
-
+        llama_token id = llama_sampler_sample(smpl, st->ctx, -1);
         if (llama_vocab_is_eog(st->vocab, id)) {
             break;
         }
 
-        const std::string piece = common_token_to_piece(st->ctx, id, /*special*/ false);
+        std::string piece = token_to_piece(st->vocab, id);
         out += piece;
-        if (debug) {
-            fprintf(stderr, "%s", piece.c_str());
-            fflush(stderr);
-        }
 
-        // Per-token callback (registered on the Go side, keyed by state pointer).
         if (!piece.empty()) {
             std::vector<char> buf(piece.begin(), piece.end());
             buf.push_back('\0');
@@ -246,10 +282,10 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
             }
         }
 
-        // Stop on any anti-prompt suffix.
-        for (const std::string &a : bp->antiprompt) {
-            if (!a.empty() && out.size() >= a.size() &&
-                out.compare(out.size() - a.size(), a.size(), a) == 0) {
+        for (size_t a = 0; a < bp->antiprompt.size(); a++) {
+            const std::string &ap = bp->antiprompt[a];
+            if (!ap.empty() && out.size() >= ap.size() &&
+                out.compare(out.size() - ap.size(), ap.size(), ap) == 0) {
                 stop = true;
                 break;
             }
@@ -258,7 +294,6 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
             break;
         }
 
-        // Feed the sampled token back into the context.
         llama_batch b = llama_batch_get_one(&id, 1);
         if (llama_decode(st->ctx, b) != 0) {
             break;
@@ -266,11 +301,47 @@ int llama_predict(void *params_ptr, void *state_pr, char *result, bool debug) {
         st->n_past++;
     }
 
-    common_sampler_free(smpl);
+    llama_sampler_free(smpl);
 
-    // Inherited ABI: caller (Go) owns a result buffer sized to po.Tokens bytes.
-    std::strcpy(result, out.c_str());
+    // The Go caller allocates `result` as make([]byte, tokens) — i.e. n_predict
+    // BYTES — but generated text can be several bytes per token. Bound the copy
+    // to avoid overflowing that buffer (callers that need the full text should
+    // accumulate via the token callback). Leave room for the NUL terminator.
+    size_t cap = bp->n_predict > 0 ? (size_t)bp->n_predict : 128;
+    if (out.size() > cap - 1) {
+        out.resize(cap - 1);
+    }
+    std::memcpy(result, out.data(), out.size());
+    result[out.size()] = '\0';
     return 0;
+}
+
+int apply_chat_template(void *state_pr, const char *system, const char *user, char *result, int result_size) {
+    binding_state *st = static_cast<binding_state *>(state_pr);
+    if (st == nullptr || st->model == nullptr || result == nullptr || result_size <= 0) {
+        return -1;
+    }
+    const char *tmpl = llama_model_chat_template(st->model, nullptr);
+    if (tmpl == nullptr) {
+        return 0; // no embedded template — caller falls back to raw concatenation
+    }
+
+    llama_chat_message msgs[2];
+    size_t n = 0;
+    if (system != nullptr && system[0] != '\0') {
+        msgs[n].role = "system";
+        msgs[n].content = system;
+        n++;
+    }
+    msgs[n].role = "user";
+    msgs[n].content = user ? user : "";
+    n++;
+
+    int32_t len = llama_chat_apply_template(tmpl, msgs, n, /*add_ass*/ true, result, result_size);
+    if (len >= 0 && len < result_size) {
+        result[len] = '\0';
+    }
+    return (int)len;
 }
 
 int llama_tokenize_string(void *params_ptr, void *state_pr, int *result) {
@@ -279,42 +350,41 @@ int llama_tokenize_string(void *params_ptr, void *state_pr, int *result) {
     if (bp == nullptr || st == nullptr || st->ctx == nullptr || result == nullptr) {
         return -1;
     }
-    std::vector<llama_token> toks =
-        common_tokenize(st->ctx, bp->prompt, /*add_special*/ true, /*parse_special*/ true);
-    for (size_t i = 0; i < toks.size(); i++) {
+    std::vector<llama_token> toks = tokenize(st->vocab, bp->prompt, true);
+    // result holds at most n_predict ints (Go allocates make([]C.int, tokens)).
+    size_t cap = bp->n_predict > 0 ? (size_t)bp->n_predict : toks.size();
+    size_t w = toks.size() < cap ? toks.size() : cap;
+    for (size_t i = 0; i < w; i++) {
         result[i] = (int)toks[i];
     }
     return (int)toks.size();
 }
 
-// ---- step 4 / deferred stubs ----
-
 int get_embeddings(void *params_ptr, void *state_pr, float *res_embeddings) {
     (void)params_ptr; (void)state_pr; (void)res_embeddings;
-    return 1; // TODO(step 4): llama_get_embeddings_seq + pooling
+    return 1; // TODO: llama_get_embeddings_seq + pooling
 }
 
 int get_token_embeddings(void *params_ptr, void *state_pr, int *tokens, int tokenSize,
                          float *res_embeddings) {
     (void)params_ptr; (void)state_pr; (void)tokens; (void)tokenSize; (void)res_embeddings;
-    return 1; // TODO(step 4)
+    return 1;
 }
 
 int speculative_sampling(void *params_ptr, void *target_model, void *draft_model,
                          char *result, bool debug) {
     (void)params_ptr; (void)target_model; (void)draft_model; (void)debug;
     if (result != nullptr) { result[0] = '\0'; }
-    return 1; // TODO(deferred): common/speculative.h
+    return 1;
 }
 
 int load_state(void *ctx, char *statefile, char *modes) {
     (void)ctx; (void)statefile; (void)modes;
-    return 1; // TODO(step 4): llama_state_load_file
+    return 1;
 }
 
 void save_state(void *ctx, char *dst, char *modes) {
     (void)ctx; (void)dst; (void)modes;
-    // TODO(step 4): llama_state_save_file
 }
 
 } // extern "C"

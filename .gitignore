@@ -16,3 +16,4 @@ ggllm-test-model.bin.scripts/
 binding.o
 libbinding.a
 *.exe
+build-cuda/

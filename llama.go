@@ -3,7 +3,6 @@ package llama
 // #cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/llama.cpp/include -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/ggml/include
 // #cgo CFLAGS: -I${SRCDIR}/llama.cpp/include
 // #cgo LDFLAGS: -L${SRCDIR}/ -lbinding
-// #cgo windows LDFLAGS: -Wl,--start-group ${SRCDIR}/llama.cpp/build/common/libllama-common.a ${SRCDIR}/llama.cpp/build/common/libllama-common-base.a ${SRCDIR}/llama.cpp/build/src/libllama.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml-cpu.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml-base.a ${SRCDIR}/llama.cpp/build/vendor/cpp-httplib/libcpp-httplib.a -Wl,--end-group -fopenmp -lws2_32 -lbcrypt -lstdc++ -lm
 // #cgo linux LDFLAGS: -fopenmp -lstdc++ -lm
 // #cgo darwin LDFLAGS: -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
 // #cgo darwin CXXFLAGS: -std=c++17
@@ -333,6 +332,32 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	}
 
 	return res, nil
+}
+
+// ApplyChatTemplate formats a (system, user) pair using the model's embedded
+// GGUF chat template. It returns ("", nil) when the model has no template, so
+// callers can fall back to raw concatenation.
+func (l *LLama) ApplyChatTemplate(system, user string) (string, error) {
+	csys := C.CString(system)
+	defer C.free(unsafe.Pointer(csys))
+	cusr := C.CString(user)
+	defer C.free(unsafe.Pointer(cusr))
+
+	size := 8192
+	for {
+		buf := make([]byte, size)
+		n := int(C.apply_chat_template(l.state, csys, cusr, (*C.char)(unsafe.Pointer(&buf[0])), C.int(size)))
+		switch {
+		case n < 0:
+			return "", fmt.Errorf("apply_chat_template failed (%d)", n)
+		case n == 0:
+			return "", nil // no embedded template
+		case n <= size:
+			return string(buf[:n]), nil
+		default:
+			size = n + 1 // buffer too small; grow and retry
+		}
+	}
 }
 
 // tokenize has an interesting return property: negative lengths (potentially) have meaning.
