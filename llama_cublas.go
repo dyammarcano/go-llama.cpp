@@ -1,5 +1,4 @@
 //go:build cublas
-// +build cublas
 
 package llama
 

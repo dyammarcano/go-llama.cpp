@@ -71,7 +71,7 @@ func Open(path string) (f *File, err error) {
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err = binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
-		return nil, err
+		return
 	}
 
 	if !bytes.Equal(f.Magic[:], []byte("GGUF")) {
