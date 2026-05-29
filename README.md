@@ -24,18 +24,29 @@ Clone the repository locally:
 git clone --recurse-submodules https://github.com/go-skynet/go-llama.cpp
 ```
 
-To build the bindings locally, run:
+> **Modernized fork:** this fork tracks current `llama.cpp` (pure C `llama.h`
+> API, `llama_sampler` chain, chat templates), builds with **Go 1.25** and a
+> [Task](https://taskfile.dev) file (the old `make libbinding.a` flow is gone),
+> and supports **CPU**, **CUDA**, and **Vulkan** backends.
+
+Build with [Task](https://taskfile.dev) (`task --list` shows all targets):
 
 ```
 cd go-llama.cpp
-make libbinding.a
+task deps          # init the llama.cpp submodule
+task build:cpu     # MinGW static (default)
+task build:cuda    # MSVC shared DLLs, GGML_CUDA=ON (needs VS2022 + CUDA toolkit)
+task build:vulkan  # MinGW static, GGML_VULKAN=ON (needs the Vulkan SDK)
 ```
 
-Now you can run the example with:
+Then run the example:
 
 ```
-LIBRARY_PATH=$PWD C_INCLUDE_PATH=$PWD go run ./examples -m "/model/path/here" -t 14
+go run ./examples -m "/model/path/here" -t 14          # CPU
+go run -tags cuda ./examples -m "/model/path/here"      # CUDA (ship the build-cuda DLLs on PATH)
 ```
+
+Other targets: `task test`, `task fmt`, `task fix`, `task lint`, `task clean`.
 
 ## Acceleration
 
