@@ -1,9 +1,12 @@
 package llama
 
-// #cgo CXXFLAGS: -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp
-// #cgo LDFLAGS: -L${SRCDIR}/ -lbinding -lm -lstdc++
-// #cgo darwin LDFLAGS: -framework Accelerate
-// #cgo darwin CXXFLAGS: -std=c++11
+// #cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/llama.cpp/include -I${SRCDIR}/llama.cpp/common -I${SRCDIR}/llama.cpp/ggml/include
+// #cgo CFLAGS: -I${SRCDIR}/llama.cpp/include
+// #cgo LDFLAGS: -L${SRCDIR}/ -lbinding
+// #cgo windows LDFLAGS: -Wl,--start-group ${SRCDIR}/llama.cpp/build/common/libllama-common.a ${SRCDIR}/llama.cpp/build/common/libllama-common-base.a ${SRCDIR}/llama.cpp/build/src/libllama.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml-cpu.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml.a ${SRCDIR}/llama.cpp/build/ggml/src/ggml-base.a ${SRCDIR}/llama.cpp/build/vendor/cpp-httplib/libcpp-httplib.a -Wl,--end-group -fopenmp -lws2_32 -lbcrypt -lstdc++ -lm
+// #cgo linux LDFLAGS: -fopenmp -lstdc++ -lm
+// #cgo darwin LDFLAGS: -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
+// #cgo darwin CXXFLAGS: -std=c++17
 // #include "binding.h"
 // #include <stdlib.h>
 import "C"
