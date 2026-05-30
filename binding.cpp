@@ -273,12 +273,15 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
                             int n_batch, int n_keep, const char **antiprompt, int antiprompt_count,
                             float tfs_z, float typical_p, float frequency_penalty,
                             float presence_penalty, int mirostat, float mirostat_eta,
-                            float mirostat_tau, bool penalize_nl, const char *logit_bias,
+                            float mirostat_tau, bool penalize_nl,
                             const char *session_file, bool prompt_cache_all, bool mlock, bool mmap,
                             const char *maingpu, const char *tensorsplit, bool prompt_cache_ro,
                             const char *grammar, float rope_freq_base, float rope_freq_scale,
-                            float negative_prompt_scale, const char *negative_prompt, int n_draft) {
-    (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)penalize_nl; (void)logit_bias;
+                            float negative_prompt_scale, const char *negative_prompt, int n_draft,
+                            float min_p,
+                            const int32_t *logit_bias_tokens, const float *logit_bias_values,
+                            int logit_bias_count) {
+    (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)penalize_nl;
     (void)session_file; (void)prompt_cache_all; (void)mlock; (void)mmap; (void)maingpu;
     (void)tensorsplit; (void)prompt_cache_ro; (void)grammar; (void)rope_freq_base;
     (void)rope_freq_scale; (void)negative_prompt_scale; (void)negative_prompt; (void)n_draft;
@@ -303,6 +306,11 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
     p->mirostat     = mirostat;
     p->mirostat_eta = mirostat_eta;
     p->mirostat_tau = mirostat_tau;
+    p->min_p = min_p;
+    for (int i = 0; i < logit_bias_count; i++) {
+        p->logit_bias.push_back(llama_logit_bias{
+            (llama_token)logit_bias_tokens[i], logit_bias_values[i] });
+    }
 
     if (antiprompt != nullptr && antiprompt_count > 0) {
         for (int i = 0; i < antiprompt_count; i++) {
