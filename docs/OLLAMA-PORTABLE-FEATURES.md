@@ -55,15 +55,19 @@ No C++ changes needed.
 
 Effort: very low.
 
-## 🔧 4. Wire the sampler features already stubbed in `binding.cpp`
-`binding.cpp` declares-but-`(void)`-ignores min-p, typical-p, mirostat, logit
-bias, and **GBNF grammar**. llama.cpp provides all of these as C samplers
-(`llama_sampler_init_grammar`, `_min_p`, `_typical`, `_mirostat`, `_logit_bias`).
-Ollama's grammar + JSON-schema usage is the *reference* for structured output —
-but the implementation should be **C wiring in `make_sampler()`**, not a Go port.
-This is how you get constrained/JSON output (GAP #1).
+## ✅ 4. Wire the sampler features already stubbed in `binding.cpp`
+`min_p`, `typical_p`, `mirostat` (v1 & v2), and `logit_bias` are now fully wired
+into `make_sampler()` and connected to the Go API (`SetMinP`, `SetTypicalP`,
+`SetMirostat`, `SetLogitBias`). The new cgo-free `logitbias` subpackage parses
+logit bias strings (e.g. `"<id>:-100"`) into parallel C arrays. `make_sampler()`
+redesigned to `make_sampler(bp, vocab)` with the sampler chain order:
+`logit_bias → penalties → [mirostat terminal | greedy | top_k → typical → top_p → min_p → temp → dist]`,
+all opt-in so defaults reproduce prior behavior. `tfs_z` and `penalize_nl` were
+dropped as documented no-ops (removed upstream llama.cpp).
 
-Effort: low–medium per sampler.
+**GBNF grammar wiring is deferred** as a follow-up — see the design specs:
+`docs/superpowers/specs/2026-05-30-sampler-wiring-design.md` and
+`docs/superpowers/plans/2026-05-30-sampler-wiring.md`.
 
 ---
 

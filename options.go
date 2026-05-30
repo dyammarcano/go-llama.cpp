@@ -32,6 +32,7 @@ type PredictOptions struct {
 
 	TailFreeSamplingZ float32
 	TypicalP          float32
+	MinP              float32
 	FrequencyPenalty  float32
 	PresencePenalty   float32
 	Mirostat          int
@@ -398,7 +399,8 @@ func NewPredictOptions(opts ...PredictOption) PredictOptions {
 	return p
 }
 
-// SetTailFreeSamplingZ sets the tail free sampling, parameter z.
+// SetTailFreeSamplingZ is a no-op: tail-free sampling was removed from
+// upstream llama.cpp's sampler API and is no longer wired into the chain.
 func SetTailFreeSamplingZ(tfz float32) PredictOption {
 	return func(p *PredictOptions) {
 		p.TailFreeSamplingZ = tfz
@@ -409,6 +411,14 @@ func SetTailFreeSamplingZ(tfz float32) PredictOption {
 func SetTypicalP(tp float32) PredictOption {
 	return func(p *PredictOptions) {
 		p.TypicalP = tp
+	}
+}
+
+// SetMinP sets the min-p sampling cutoff: tokens below this fraction of the top
+// token's probability are dropped. 0 (the default) disables it.
+func SetMinP(minp float32) PredictOption {
+	return func(p *PredictOptions) {
+		p.MinP = minp
 	}
 }
 
@@ -447,7 +457,8 @@ func SetMirostatTAU(mt float32) PredictOption {
 	}
 }
 
-// SetPenalizeNL sets whether to penalize newlines or not.
+// SetPenalizeNL is a no-op: newline penalization was folded into the unified
+// penalties sampler upstream and is no longer wired as a standalone knob.
 func SetPenalizeNL(pnl bool) PredictOption {
 	return func(p *PredictOptions) {
 		p.PenalizeNL = pnl

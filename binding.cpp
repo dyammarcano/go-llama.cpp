@@ -41,7 +41,14 @@ struct binding_params {
     float    penalty_freq    = 0.00f;
     float    penalty_present = 0.00f;
 
-    std::vector<std::string> antiprompt;
+    float    min_p           = 0.00f;   // 0 = disabled
+    float    typical_p       = 1.00f;   // 1.0 = disabled
+    int32_t  mirostat        = 0;       // 0 = off, 1 = v1, 2 = v2
+    float    mirostat_eta    = 0.10f;
+    float    mirostat_tau    = 5.00f;
+
+    std::vector<std::string>      antiprompt;
+    std::vector<llama_logit_bias> logit_bias;
 };
 
 int decode_tokens(llama_context *ctx, const std::vector<llama_token> &toks, int n_batch) {
@@ -87,25 +94,58 @@ std::string token_to_piece(const llama_vocab *vocab, llama_token id) {
     return std::string(buf, (size_t)n);
 }
 
-llama_sampler *make_sampler(const binding_params *bp) {
+llama_sampler *make_sampler(const binding_params *bp, const llama_vocab *vocab) {
     llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+
+    // logit_bias first — bias raw logits before any truncation.
+    if (!bp->logit_bias.empty()) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_logit_bias(
+            n_vocab, (int32_t)bp->logit_bias.size(), bp->logit_bias.data()));
+    }
+
+    // repetition penalties (unchanged condition).
     if (bp->penalty_last_n != 0 &&
         (bp->penalty_repeat != 1.0f || bp->penalty_freq != 0.0f || bp->penalty_present != 0.0f)) {
         llama_sampler_chain_add(smpl, llama_sampler_init_penalties(
             bp->penalty_last_n, bp->penalty_repeat, bp->penalty_freq, bp->penalty_present));
     }
+
+    // mirostat is terminal: it performs its own temperature + selection, so it
+    // replaces the truncation + dist tail entirely.
+    if (bp->mirostat == 1) {
+        const float eta = bp->mirostat_eta > 0.0f ? bp->mirostat_eta : 0.10f;
+        const float tau = bp->mirostat_tau > 0.0f ? bp->mirostat_tau : 5.00f;
+        llama_sampler_chain_add(smpl, llama_sampler_init_mirostat(n_vocab, bp->seed, tau, eta, 100));
+        return smpl;
+    }
+    if (bp->mirostat == 2) {
+        const float eta = bp->mirostat_eta > 0.0f ? bp->mirostat_eta : 0.10f;
+        const float tau = bp->mirostat_tau > 0.0f ? bp->mirostat_tau : 5.00f;
+        llama_sampler_chain_add(smpl, llama_sampler_init_mirostat_v2(bp->seed, tau, eta));
+        return smpl;
+    }
+
     if (bp->temp <= 0.0f) {
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
-    } else {
-        if (bp->top_k > 0) {
-            llama_sampler_chain_add(smpl, llama_sampler_init_top_k(bp->top_k));
-        }
-        if (bp->top_p < 1.0f) {
-            llama_sampler_chain_add(smpl, llama_sampler_init_top_p(bp->top_p, 1));
-        }
-        llama_sampler_chain_add(smpl, llama_sampler_init_temp(bp->temp));
-        llama_sampler_chain_add(smpl, llama_sampler_init_dist(bp->seed));
+        return smpl;
     }
+
+    // truncation tail — each entry opt-in; defaults reproduce the original chain.
+    if (bp->top_k > 0) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_k(bp->top_k));
+    }
+    if (bp->typical_p < 1.0f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_typical(bp->typical_p, 1));
+    }
+    if (bp->top_p < 1.0f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_top_p(bp->top_p, 1));
+    }
+    if (bp->min_p > 0.0f) {
+        llama_sampler_chain_add(smpl, llama_sampler_init_min_p(bp->min_p, 1));
+    }
+    llama_sampler_chain_add(smpl, llama_sampler_init_temp(bp->temp));
+    llama_sampler_chain_add(smpl, llama_sampler_init_dist(bp->seed));
     return smpl;
 }
 
@@ -130,7 +170,7 @@ int generate(binding_params *bp, binding_state *st, std::string &out, int &n_tok
     }
     st->n_past = (int)toks.size();
 
-    llama_sampler *smpl = make_sampler(bp);
+    llama_sampler *smpl = make_sampler(bp, st->vocab);
     if (smpl == nullptr) {
         return 1;
     }
@@ -233,13 +273,15 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
                             int n_batch, int n_keep, const char **antiprompt, int antiprompt_count,
                             float tfs_z, float typical_p, float frequency_penalty,
                             float presence_penalty, int mirostat, float mirostat_eta,
-                            float mirostat_tau, bool penalize_nl, const char *logit_bias,
+                            float mirostat_tau, bool penalize_nl,
                             const char *session_file, bool prompt_cache_all, bool mlock, bool mmap,
                             const char *maingpu, const char *tensorsplit, bool prompt_cache_ro,
                             const char *grammar, float rope_freq_base, float rope_freq_scale,
-                            float negative_prompt_scale, const char *negative_prompt, int n_draft) {
-    (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)typical_p; (void)mirostat;
-    (void)mirostat_eta; (void)mirostat_tau; (void)penalize_nl; (void)logit_bias;
+                            float negative_prompt_scale, const char *negative_prompt, int n_draft,
+                            float min_p,
+                            const int32_t *logit_bias_tokens, const float *logit_bias_values,
+                            int logit_bias_count) {
+    (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)penalize_nl;
     (void)session_file; (void)prompt_cache_all; (void)mlock; (void)mmap; (void)maingpu;
     (void)tensorsplit; (void)prompt_cache_ro; (void)grammar; (void)rope_freq_base;
     (void)rope_freq_scale; (void)negative_prompt_scale; (void)negative_prompt; (void)n_draft;
@@ -260,6 +302,15 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
     p->penalty_repeat  = repeat_penalty;
     p->penalty_freq    = frequency_penalty;
     p->penalty_present = presence_penalty;
+    p->typical_p    = typical_p;
+    p->mirostat     = mirostat;
+    p->mirostat_eta = mirostat_eta;
+    p->mirostat_tau = mirostat_tau;
+    p->min_p = min_p;
+    for (int i = 0; i < logit_bias_count; i++) {
+        p->logit_bias.push_back(llama_logit_bias{
+            (llama_token)logit_bias_tokens[i], logit_bias_values[i] });
+    }
 
     if (antiprompt != nullptr && antiprompt_count > 0) {
         for (int i = 0; i < antiprompt_count; i++) {
