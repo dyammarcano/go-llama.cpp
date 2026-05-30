@@ -76,7 +76,40 @@ func TestFilterFlushRemainder(t *testing.T) {
 	f := New([]string{"<end>"})
 
 	f.Push("ab<") // held as a possible stop prefix
+
 	if got := f.Flush(); got != "ab<" {
 		t.Errorf("Flush = %q want 'ab<'", got)
+	}
+}
+
+func TestFilterStopAtStart(t *testing.T) {
+	got, stopped := collect(New([]string{"<end>"}), "<end>tail")
+
+	if got != "" || !stopped {
+		t.Errorf("got %q,%v want '',true", got, stopped)
+	}
+}
+
+func TestFilterConsecutiveHolds(t *testing.T) {
+	f := New([]string{"<end>"})
+
+	for _, p := range []string{"<", "e", "n", "d"} {
+		if e, s := f.Push(p); e != "" || s {
+			t.Fatalf("Push(%q) = %q,%v want '',false (held)", p, e, s)
+		}
+	}
+
+	e, s := f.Push(">x")
+
+	if e != "" || !s {
+		t.Errorf("Push('>x') = %q,%v want '',true", e, s)
+	}
+}
+
+func TestFilterEmptyStopsPassthrough(t *testing.T) {
+	got, stopped := collect(New([]string{}), "plain ", "text")
+
+	if got != "plain text" || stopped {
+		t.Errorf("got %q,%v want 'plain text',false", got, stopped)
 	}
 }

@@ -83,6 +83,25 @@ It faithfully ports Ollama's Llama-family memory model (single-GPU). Non-Llama
 dense architectures get an approximate estimate (`est.Approximate == true`);
 recurrent/SSM architectures are not yet supported.
 
+## Streaming output filter (stop sequences + UTF-8)
+
+`streamfilter.Filter` filters a stream of decoded token pieces — pure Go, no
+cgo: it holds back text that might be part of a stop sequence or an incomplete
+multibyte UTF-8 character, and reports when a stop is hit:
+
+```go
+import "github.com/go-skynet/go-llama.cpp/streamfilter"
+
+f := streamfilter.New([]string{"</s>", "User:"})
+emit, stop := f.Push(piece) // forward emit to your callback; halt when stop
+// ... at end of generation:
+emit = f.Flush()
+```
+
+It is a faithful port of Ollama's stop-sequence handling. Wiring it into the
+in-process binding callback is tracked as a follow-up (see
+`docs/superpowers/specs/2026-05-29-streamfilter-design.md`).
+
 ## Acceleration
 
 ### OpenBLAS
