@@ -143,13 +143,10 @@ func (l *LLama) TokenEmbeddings(tokens []int, opts ...PredictOption) ([]float32,
 	for i, v := range tokens {
 		(*[1<<31 - 1]int32)(unsafe.Pointer(myArray))[i] = int32(v)
 	}
-	// void* llama_allocate_params(const char *prompt, int seed, int threads, int tokens,
-	// int top_k, float top_p, float temp, float repeat_penalty,
-	// int repeat_last_n, bool ignore_eos, bool memory_f16,
-	// int n_batch, int n_keep, const char** antiprompt, int antiprompt_count,
-	// float tfs_z, float typical_p, float frequency_penalty, float presence_penalty, int mirostat, float mirostat_eta, float mirostat_tau, bool penalize_nl, const char *logit_bias, const char *session_file, bool prompt_cache_all, bool mlock, bool mmap, const char *maingpu, const char *tensorsplit , bool prompt_cache_ro,
-	// float rope_freq_base, float rope_freq_scale, float negative_prompt_scale, const char* negative_prompt
-	// );
+	// llama_allocate_params marshals PredictOptions into a C binding_params; see
+	// binding.h for the authoritative signature. The trailing params are
+	// min_p followed by the parsed logit_bias token/value arrays + count (the
+	// legacy const char *logit_bias string param was removed in feature #4).
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(C.CString(""), C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
