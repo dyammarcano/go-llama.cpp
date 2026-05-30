@@ -20,6 +20,13 @@ import (
 	"github.com/go-skynet/go-llama.cpp/logitbias"
 )
 
+// cstr allocates a C string and returns both the pointer and a free function.
+// Use: cs, free := cstr(s); defer free()
+func cstr(s string) (*C.char, func()) {
+	p := C.CString(s)
+	return p, func() { C.free(unsafe.Pointer(p)) }
+}
+
 // cLogitBias parses a "id:bias,..." spec into C arrays for llama_allocate_params.
 // On empty input or a parse error (logged and skipped — a malformed bias must
 // never abort generation) it returns nil pointers, 0, and a no-op free.
@@ -404,6 +411,18 @@ func (l *LLama) PredictResult(text string, opts ...PredictOption) (string, int, 
 		pass = &reversePrompt[0]
 	}
 
+	// Free C strings that cannot be bound to a named variable before the call.
+	pathPromptCache, freePathPromptCache := cstr(po.PathPromptCache)
+	defer freePathPromptCache()
+	mainGPU, freeMainGPU := cstr(po.MainGPU)
+	defer freeMainGPU()
+	tensorSplit, freeTensorSplit := cstr(po.TensorSplit)
+	defer freeTensorSplit()
+	grammar, freeGrammar := cstr(po.Grammar)
+	defer freeGrammar()
+	negativePrompt, freeNegativePrompt := cstr(po.NegativePrompt)
+	defer freeNegativePrompt()
+
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
@@ -412,26 +431,39 @@ func (l *LLama) PredictResult(text string, opts ...PredictOption) (string, int, 
 		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
+		pathPromptCache, C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
+		mainGPU, tensorSplit,
 		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
+		grammar,
+		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), negativePrompt,
 		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
 	)
 	defer C.llama_free_params(params)
 
+	// Allocate the result buffer with C.malloc so it lives outside the Go heap.
+	// This is required because llama_predict_full calls back into Go (tokenCallback)
+	// during generation; a cgo callback re-entering Go can trigger a GC cycle that
+	// may move Go heap objects — corrupting the buffer pointer held by C code.
+	// A C-heap buffer is never moved by the Go GC.
 	var nTok C.int
 	size := 32768
 	for {
-		buf := make([]byte, size)
-		full := int(C.llama_predict_full(params, l.state, (*C.char)(unsafe.Pointer(&buf[0])), C.int(size), &nTok, C.bool(po.DebugMode)))
+		cbuf := C.malloc(C.size_t(size))
+		if cbuf == nil {
+			return "", 0, fmt.Errorf("inference: out of memory allocating %d bytes", size)
+		}
+		full := int(C.llama_predict_full(params, l.state, (*C.char)(cbuf), C.int(size), &nTok, C.bool(po.DebugMode)))
 		if full < 0 {
+			C.free(cbuf)
 			return "", 0, fmt.Errorf("inference failed")
 		}
 		if full < size {
-			return string(buf[:full]), int(nTok), nil
+			// Copy the C buffer into a Go string before freeing.
+			result := C.GoStringN((*C.char)(cbuf), C.int(full))
+			C.free(cbuf)
+			return result, int(nTok), nil
 		}
+		C.free(cbuf)
 		size = full + 1 // output was truncated; grow and retry
 	}
 }
