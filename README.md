@@ -102,6 +102,14 @@ It is a faithful port of Ollama's stop-sequence handling. Wiring it into the
 in-process binding callback is tracked as a follow-up (see
 `docs/superpowers/specs/2026-05-29-streamfilter-design.md`).
 
+### Sampler smoke test (manual, requires a built cgo binary + a GGUF model)
+
+1. Greedy (`SetTemperature(0)`) output is identical to before this change.
+2. `SetMinP(0.05)` with `SetTemperature(0.8)` produces coherent text.
+3. `SetMirostat(2)` produces coherent text.
+4. `SetLogitBias("<id>:-100")` for a token that otherwise appears makes that
+   token never appear in the output.
+
 ## Acceleration
 
 ### OpenBLAS
