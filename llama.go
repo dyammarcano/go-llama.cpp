@@ -23,7 +23,7 @@ import (
 // cLogitBias parses a "id:bias,..." spec into C arrays for llama_allocate_params.
 // On empty input or a parse error (logged and skipped — a malformed bias must
 // never abort generation) it returns nil pointers, 0, and a no-op free.
-func cLogitBias(spec string) (toks *C.int32_t, vals *C.float, count C.int, free func()) {
+func cLogitBias(spec string) (toks *C.int32_t, vals *C.float, count C.int, cleanup func()) {
 	noop := func() {}
 	entries, err := logitbias.Parse(spec)
 	if err != nil {
@@ -32,6 +32,11 @@ func cLogitBias(spec string) (toks *C.int32_t, vals *C.float, count C.int, free 
 	}
 	n := len(entries)
 	if n == 0 {
+		return nil, nil, 0, noop
+	}
+	const maxLogitBias = 1 << 20 // generous ceiling; real vocabularies are far smaller
+	if n > maxLogitBias {
+		slog.Warn("logit_bias list too large; ignoring", "count", n, "max", maxLogitBias)
 		return nil, nil, 0, noop
 	}
 	tokMem := C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(C.int32_t(0))))
@@ -473,7 +478,6 @@ func (l *LLama) TokenizeString(text string, opts ...PredictOption) (int32, []int
 
 	var fakeDblPtr **C.char
 
-	// copy pasted and modified minimally. Should I simplify down / do we need an "allocate defaults"
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
