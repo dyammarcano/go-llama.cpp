@@ -192,14 +192,6 @@ int generate(binding_params *bp, binding_state *st, std::string &out, int &n_tok
                 stop = true;
             }
         }
-        for (size_t a = 0; a < bp->antiprompt.size(); a++) {
-            const std::string &ap = bp->antiprompt[a];
-            if (!ap.empty() && out.size() >= ap.size() &&
-                out.compare(out.size() - ap.size(), ap.size(), ap) == 0) {
-                stop = true;
-                break;
-            }
-        }
         if (stop) {
             break;
         }

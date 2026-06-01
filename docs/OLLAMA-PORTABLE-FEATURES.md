@@ -55,6 +55,11 @@ No C++ changes needed.
 
 Effort: very low.
 
+**Wired (2026-06-01):** `streamfilter` is now connected to the binding's
+token-callback path; the C++ antiprompt suffix-compare in `binding.cpp` was
+removed so Go owns stop detection. See
+`docs/superpowers/specs/2026-06-01-streamfilter-wiring-design.md`.
+
 ## ✅ 4. Wire the sampler features already stubbed in `binding.cpp`
 `min_p`, `typical_p`, `mirostat` (v1 & v2), and `logit_bias` are now fully wired
 into `make_sampler()` and connected to the Go API (`SetMinP`, `SetTypicalP`,
