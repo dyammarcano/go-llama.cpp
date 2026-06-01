@@ -28,8 +28,10 @@ stop-trimmed and UTF-8-valid.
 ## Scope
 
 **Ships now:**
-- A small internal `streamSink` type in `llama.go` that wraps a per-generation
-  `*streamfilter.Filter` + the optional user callback + a result accumulator.
+- A small `streamfilter.Sink` type in the (cgo-free) `streamfilter` package that
+  wraps a per-generation `*streamfilter.Filter` + the optional user callback + a
+  result accumulator. It lives outside the cgo `llama` package so it can be
+  unit-tested headlessly (no cgo, no model).
 - A `getCallback` accessor next to the existing `setCallback`, so the wiring can
   read and restore the persistent callback registered via `SetTokenCallback`.
 - Wiring in **all three** generation entry points: `Predict`, `PredictResult`,
@@ -62,22 +64,28 @@ stop-trimmed and UTF-8-valid.
 
 ## Components
 
-### 1. `streamSink` (new, in `llama.go`)
+### 1. `streamfilter.Sink` (new, in the `streamfilter` package)
+
+Exported from the cgo-free `streamfilter` package (`streamfilter/sink.go`) so it
+can be unit-tested without building the cgo `llama` package or loading a model.
 
 ```go
-// streamSink routes each decoded token piece through a streamfilter.Filter,
-// forwards only safe-to-emit text to the user's callback, accumulates the
-// filtered text for the function's return value, and reports when generation
-// should halt.
-type streamSink struct {
-    f    *streamfilter.Filter
+// Sink routes each decoded token piece through a Filter: it forwards only
+// safe-to-emit text to an optional user callback, accumulates the full filtered
+// text for the caller's return value, and reports when generation should halt.
+type Sink struct {
+    f    *Filter
     user func(string) bool // optional; may be nil
     buf  strings.Builder
 }
 
-// onToken is registered as the bridge callback. Returning false halts the C
+func NewSink(stops []string, user func(string) bool) *Sink {
+    return &Sink{f: New(stops), user: user}
+}
+
+// OnToken is registered as the bridge callback. Returning false halts the C
 // decode loop (tokenCallback-returns-0 path).
-func (s *streamSink) onToken(piece string) bool {
+func (s *Sink) OnToken(piece string) bool {
     emit, stop := s.f.Push(piece)
     if emit != "" {
         s.buf.WriteString(emit)
@@ -88,9 +96,9 @@ func (s *streamSink) onToken(piece string) bool {
     return !stop
 }
 
-// finish flushes any held remainder at end-of-generation and returns the full
+// Finish flushes any held remainder at end-of-generation and returns the full
 // filtered text.
-func (s *streamSink) finish() string {
+func (s *Sink) Finish() string {
     if rem := s.f.Flush(); rem != "" {
         s.buf.WriteString(rem)
         if s.user != nil {
@@ -126,16 +134,16 @@ user := po.TokenCallback
 if user == nil {
     user = prev // honor a persistent SetTokenCallback as the streaming sink
 }
-sink := &streamSink{f: streamfilter.New(po.StopPrompts), user: user}
-setCallback(l.state, sink.onToken)
+sink := streamfilter.NewSink(po.StopPrompts, user)
+setCallback(l.state, sink.OnToken)
 defer setCallback(l.state, prev) // restore (not nil) so persistent cb survives
 ```
 
 - Pass `nil, 0` for the C antiprompt args in the `llama_allocate_params` call.
 - After the C call returns, the function's text result is `sink.finish()`:
-  - `Predict`  → `return applyPrefixTrims(sink.finish(), text), nil`
-  - `PredictResult` → `return sink.finish(), int(nTok), nil`
-  - `SpeculativeSampling` → `return applyPrefixTrims(sink.finish(), text), nil`
+  - `Predict`  → `return applyPrefixTrims(sink.Finish(), text), nil`
+  - `PredictResult` → `return sink.Finish(), int(nTok), nil`
+  - `SpeculativeSampling` → `return applyPrefixTrims(sink.Finish(), text), nil`
 - The C result buffer is still passed (the ABI requires it; `llama_predict` has
   no size param and writes unbounded, so `Predict`/`SpeculativeSampling` keep a
   C-heap buffer sized to `po.Tokens`) but its content is ignored.
@@ -167,14 +175,14 @@ C generate() loop
   └─ sample token id
      ├─ llama_vocab_is_eog? ─ yes ─► break (natural end)
      └─ decode piece ─► tokenCallback(state, piece)   [C → Go bridge]
-                          └─ sink.onToken(piece)
+                          └─ sink.OnToken(piece)
                                └─ Filter.Push(piece) → (emit, stop)
                                     ├─ emit != "" → buf += emit; user(emit)
                                     └─ return !stop   (false halts C loop)
-  (loop ends: EOG, token limit, n_ctx, or onToken==false)
+  (loop ends: EOG, token limit, n_ctx, or OnToken==false)
         │
         ▼
-  Go: result = sink.finish()           // Filter.Flush() → buf += remainder
+  Go: result = sink.Finish()           // Filter.Flush() → buf += remainder
         │                              // buf is stop-trimmed + UTF-8-valid
         ▼
   apply per-function prefix trims → return
@@ -214,8 +222,8 @@ C generate() loop
 ## Testing
 
 **Headless (no cgo, no model) — added:**
-- `streamSink` unit test driving `onToken`/`finish` directly with scripted
-  pieces (no C, no model):
+- `streamfilter.Sink` unit test driving `OnToken`/`Finish` directly with
+  scripted pieces (no C, no model):
   - no stops, ASCII → each piece emitted, return == concatenation.
   - stop within one piece → emit text before stop, `onToken` returns false,
     remainder dropped, return text excludes the stop.
