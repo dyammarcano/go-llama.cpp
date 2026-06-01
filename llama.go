@@ -278,6 +278,7 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 	defer setCallback(l.state, prev)
 
 	input := C.CString(text)
+	defer C.free(unsafe.Pointer(input))
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
@@ -290,6 +291,18 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 	}
 	defer C.free(outBuf)
 
+	// Free C strings that cannot be bound to a named variable before the call.
+	pathPromptCache, freePathPromptCache := cstr(po.PathPromptCache)
+	defer freePathPromptCache()
+	mainGPU, freeMainGPU := cstr(po.MainGPU)
+	defer freeMainGPU()
+	tensorSplit, freeTensorSplit := cstr(po.TensorSplit)
+	defer freeTensorSplit()
+	grammar, freeGrammar := cstr(po.Grammar)
+	defer freeGrammar()
+	negativePrompt, freeNegativePrompt := cstr(po.NegativePrompt)
+	defer freeNegativePrompt()
+
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
@@ -298,13 +311,14 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
+		pathPromptCache, C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
+		mainGPU, tensorSplit,
 		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
+		grammar,
+		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), negativePrompt,
 		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
 	)
+	defer C.llama_free_params(params)
 	ret := C.speculative_sampling(params, l.state, ll.state, (*C.char)(outBuf), C.bool(po.DebugMode))
 	if ret != 0 {
 		return "", fmt.Errorf("inference failed")
@@ -314,8 +328,6 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 	res = strings.TrimPrefix(res, " ")
 	res = strings.TrimPrefix(res, text)
 	res = strings.TrimPrefix(res, "\n")
-
-	C.llama_free_params(params)
 
 	return res, nil
 }
@@ -336,6 +348,7 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	defer setCallback(l.state, prev)
 
 	input := C.CString(text)
+	defer C.free(unsafe.Pointer(input))
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
@@ -350,6 +363,18 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	}
 	defer C.free(outBuf)
 
+	// Free C strings that cannot be bound to a named variable before the call.
+	pathPromptCache, freePathPromptCache := cstr(po.PathPromptCache)
+	defer freePathPromptCache()
+	mainGPU, freeMainGPU := cstr(po.MainGPU)
+	defer freeMainGPU()
+	tensorSplit, freeTensorSplit := cstr(po.TensorSplit)
+	defer freeTensorSplit()
+	grammar, freeGrammar := cstr(po.Grammar)
+	defer freeGrammar()
+	negativePrompt, freeNegativePrompt := cstr(po.NegativePrompt)
+	defer freeNegativePrompt()
+
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
@@ -358,13 +383,14 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
+		pathPromptCache, C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
+		mainGPU, tensorSplit,
 		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
+		grammar,
+		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), negativePrompt,
 		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
 	)
+	defer C.llama_free_params(params)
 	ret := C.llama_predict(params, l.state, (*C.char)(outBuf), C.bool(po.DebugMode))
 	if ret != 0 {
 		return "", fmt.Errorf("inference failed")
@@ -374,8 +400,6 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	res = strings.TrimPrefix(res, " ")
 	res = strings.TrimPrefix(res, text)
 	res = strings.TrimPrefix(res, "\n")
-
-	C.llama_free_params(params)
 
 	return res, nil
 }
