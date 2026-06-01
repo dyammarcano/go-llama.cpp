@@ -268,31 +268,34 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOption) (string, error) {
 	po := NewPredictOptions(opts...)
 
-	if po.TokenCallback != nil {
-		setCallback(l.state, po.TokenCallback)
+	prev := getCallback(l.state)
+	user := po.TokenCallback
+	if user == nil {
+		user = prev
 	}
+	sink := streamfilter.NewSink(po.StopPrompts, user)
+	setCallback(l.state, sink.OnToken)
+	defer setCallback(l.state, prev)
 
 	input := C.CString(text)
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
-	out := make([]byte, po.Tokens)
 
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
+	// C-heap result buffer (GC-safe across the cgo callback); content ignored —
+	// the result text is assembled in Go from the sink.
+	outBuf := C.malloc(C.size_t(po.Tokens))
+	if outBuf == nil {
+		return "", fmt.Errorf("inference: out of memory allocating %d bytes", po.Tokens)
 	}
+	defer C.free(outBuf)
 
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
 		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
 		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
+		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
 		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
@@ -302,25 +305,17 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
 		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
 	)
-	ret := C.speculative_sampling(params, l.state, ll.state, (*C.char)(unsafe.Pointer(&out[0])), C.bool(po.DebugMode))
+	ret := C.speculative_sampling(params, l.state, ll.state, (*C.char)(outBuf), C.bool(po.DebugMode))
 	if ret != 0 {
 		return "", fmt.Errorf("inference failed")
 	}
-	res := C.GoString((*C.char)(unsafe.Pointer(&out[0])))
+	res := sink.Finish()
 
 	res = strings.TrimPrefix(res, " ")
 	res = strings.TrimPrefix(res, text)
 	res = strings.TrimPrefix(res, "\n")
 
-	for _, s := range po.StopPrompts {
-		res = strings.TrimRight(res, s)
-	}
-
 	C.llama_free_params(params)
-
-	if po.TokenCallback != nil {
-		setCallback(l.state, nil)
-	}
 
 	return res, nil
 }
