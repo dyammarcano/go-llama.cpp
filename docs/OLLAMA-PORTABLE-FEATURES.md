@@ -74,6 +74,13 @@ dropped as documented no-ops (removed upstream llama.cpp).
 `docs/superpowers/specs/2026-05-30-sampler-wiring-design.md` and
 `docs/superpowers/plans/2026-05-30-sampler-wiring.md`.
 
+**GBNF grammar wired (2026-06-01):** `make_sampler()` now adds
+`llama_sampler_init_grammar(vocab, po.Grammar, "root")` to the chain when a
+grammar is set, so `WithGrammar(...)` constrains output; an unparseable grammar
+fails generation loudly. See
+`docs/superpowers/specs/2026-06-01-grammar-wiring-design.md` and
+`docs/grammar-smoke-test.md`.
+
 ---
 
 ## ⛔ Skip — duplicates the C API or is server-coupled

@@ -47,6 +47,8 @@ struct binding_params {
     float    mirostat_eta    = 0.10f;
     float    mirostat_tau    = 5.00f;
 
+    std::string grammar;            // GBNF; "" = unconstrained
+
     std::vector<std::string>      antiprompt;
     std::vector<llama_logit_bias> logit_bias;
 };
@@ -109,6 +111,19 @@ llama_sampler *make_sampler(const binding_params *bp, const llama_vocab *vocab) 
         (bp->penalty_repeat != 1.0f || bp->penalty_freq != 0.0f || bp->penalty_present != 0.0f)) {
         llama_sampler_chain_add(smpl, llama_sampler_init_penalties(
             bp->penalty_last_n, bp->penalty_repeat, bp->penalty_freq, bp->penalty_present));
+    }
+
+    // grammar constraint — masks tokens that violate the GBNF before any
+    // terminal sampler, so mirostat / greedy / the truncation tail all sample
+    // from grammar-valid tokens. NULL means the grammar failed to parse: free
+    // the chain and fail (generate() returns an error on a nullptr sampler).
+    if (!bp->grammar.empty()) {
+        llama_sampler *gr = llama_sampler_init_grammar(vocab, bp->grammar.c_str(), "root");
+        if (gr == nullptr) {
+            llama_sampler_free(smpl);
+            return nullptr;
+        }
+        llama_sampler_chain_add(smpl, gr);
     }
 
     // mirostat is terminal: it performs its own temperature + selection, so it
@@ -275,7 +290,7 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
                             int logit_bias_count) {
     (void)ignore_eos; (void)memory_f16; (void)tfs_z; (void)penalize_nl;
     (void)session_file; (void)prompt_cache_all; (void)mlock; (void)mmap; (void)maingpu;
-    (void)tensorsplit; (void)prompt_cache_ro; (void)grammar; (void)rope_freq_base;
+    (void)tensorsplit; (void)prompt_cache_ro; (void)rope_freq_base;
     (void)rope_freq_scale; (void)negative_prompt_scale; (void)negative_prompt; (void)n_draft;
 
     binding_params *p = new binding_params();
@@ -299,6 +314,7 @@ void *llama_allocate_params(const char *prompt, int seed, int threads, int token
     p->mirostat_eta = mirostat_eta;
     p->mirostat_tau = mirostat_tau;
     p->min_p = min_p;
+    p->grammar = grammar ? std::string(grammar) : std::string();
     for (int i = 0; i < logit_bias_count; i++) {
         p->logit_bias.push_back(llama_logit_bias{
             (llama_token)logit_bias_tokens[i], logit_bias_values[i] });
