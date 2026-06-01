@@ -588,3 +588,13 @@ func setCallback(statePtr unsafe.Pointer, callback func(string) bool) {
 		callbacks[uintptr(statePtr)] = callback
 	}
 }
+
+// getCallback returns the token callback currently registered for statePtr, or
+// nil if none. Used by the prediction methods to preserve a persistent callback
+// (registered via SetTokenCallback) while a per-call filtering sink is active.
+func getCallback(statePtr unsafe.Pointer) func(string) bool {
+	m.RLock()
+	defer m.RUnlock()
+
+	return callbacks[uintptr(statePtr)]
+}
