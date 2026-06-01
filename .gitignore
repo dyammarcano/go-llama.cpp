@@ -12,7 +12,8 @@ prepare
 Thumbs.db
 
 # model files downloaded by the test script
-ggllm-test-model.bin.scripts/
+ggllm-test-model.bin
+.scripts/
 binding.o
 libbinding.a
 *.exe
