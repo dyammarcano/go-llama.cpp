@@ -98,9 +98,11 @@ emit, stop := f.Push(piece) // forward emit to your callback; halt when stop
 emit = f.Flush()
 ```
 
-It is a faithful port of Ollama's stop-sequence handling. Wiring it into the
-in-process binding callback is tracked as a follow-up (see
-`docs/superpowers/specs/2026-05-29-streamfilter-design.md`).
+It is a faithful port of Ollama's stop-sequence handling, and it is now wired
+into the in-process binding: `Predict`, `PredictResult`, and
+`SpeculativeSampling` route every decoded piece through it, so stop sequences are
+trimmed (even when split across token pieces) and multibyte UTF-8 is never
+broken. See `docs/streamfilter-smoke-test.md` for the manual model smoke test.
 
 ### Sampler smoke test (manual, requires a built cgo binary + a GGUF model)
 
