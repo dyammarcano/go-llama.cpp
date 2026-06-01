@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/go-skynet/go-llama.cpp/logitbias"
+	"github.com/go-skynet/go-llama.cpp/streamfilter"
 )
 
 // cstr allocates a C string and returns both the pointer and a free function.
@@ -327,31 +328,39 @@ func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOptio
 func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	po := NewPredictOptions(opts...)
 
-	if po.TokenCallback != nil {
-		setCallback(l.state, po.TokenCallback)
+	// Go owns stop detection + UTF-8 hold-back. Register a filtering sink that
+	// wraps the optional user callback; restore any persistent callback
+	// (SetTokenCallback) on return instead of clearing it.
+	prev := getCallback(l.state)
+	user := po.TokenCallback
+	if user == nil {
+		user = prev
 	}
+	sink := streamfilter.NewSink(po.StopPrompts, user)
+	setCallback(l.state, sink.OnToken)
+	defer setCallback(l.state, prev)
 
 	input := C.CString(text)
 	if po.Tokens == 0 {
 		po.Tokens = 99999999
 	}
-	out := make([]byte, po.Tokens)
 
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
+	// C-heap result buffer: it is written by C while the cgo token callback may
+	// trigger a Go GC, so it must not live on the (movable) Go heap. Its content
+	// is ignored — Go assembles the result from the sink — but llama_predict has
+	// no size argument, so the buffer is sized to po.Tokens to avoid an overrun.
+	outBuf := C.malloc(C.size_t(po.Tokens))
+	if outBuf == nil {
+		return "", fmt.Errorf("inference: out of memory allocating %d bytes", po.Tokens)
 	}
+	defer C.free(outBuf)
 
 	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
 	defer lbFree()
 	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
 		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
 		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
+		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
 		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
 		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
 		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
@@ -361,25 +370,17 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
 		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
 	)
-	ret := C.llama_predict(params, l.state, (*C.char)(unsafe.Pointer(&out[0])), C.bool(po.DebugMode))
+	ret := C.llama_predict(params, l.state, (*C.char)(outBuf), C.bool(po.DebugMode))
 	if ret != 0 {
 		return "", fmt.Errorf("inference failed")
 	}
-	res := C.GoString((*C.char)(unsafe.Pointer(&out[0])))
+	res := sink.Finish()
 
 	res = strings.TrimPrefix(res, " ")
 	res = strings.TrimPrefix(res, text)
 	res = strings.TrimPrefix(res, "\n")
 
-	for _, s := range po.StopPrompts {
-		res = strings.TrimRight(res, s)
-	}
-
 	C.llama_free_params(params)
-
-	if po.TokenCallback != nil {
-		setCallback(l.state, nil)
-	}
 
 	return res, nil
 }
