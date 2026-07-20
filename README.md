@@ -27,7 +27,9 @@ git clone --recurse-submodules https://github.com/go-skynet/go-llama.cpp
 > **Modernized fork:** this fork tracks current `llama.cpp` (pure C `llama.h`
 > API, `llama_sampler` chain, chat templates), builds with **Go 1.25** and a
 > [Task](https://taskfile.dev) file (the old `make libbinding.a` flow is gone),
-> and supports **CPU**, **CUDA**, and **Vulkan** backends.
+> and has build targets for **CPU**, **CUDA**, and **Vulkan** backends. Only the
+> CPU target is verified against the current pin — CUDA and Vulkan have not been
+> built here (their build directories are empty).
 
 Build with [Task](https://taskfile.dev) (`task --list` shows all targets):
 
@@ -40,6 +42,11 @@ task build:vulkan  # MinGW static, GGML_VULKAN=ON (needs the Vulkan SDK)
 ```
 
 Then run the example:
+
+> **Known issue (2026-07-20):** the CPU `go run` below currently fails to link.
+> `link_static_windows.go:10` points at `llama.cpp/build/`, but `scripts/llamacpp.sh`
+> writes to `llama.cpp/build-cpu/`, so cgo picks up a stale library tree. Repointing
+> those paths to `build-cpu/` is the fix.
 
 ```
 go run ./examples -m "/model/path/here" -t 14          # CPU
@@ -112,7 +119,12 @@ broken. See `docs/streamfilter-smoke-test.md` for the manual model smoke test.
 4. `SetLogitBias("<id>:-100")` for a token that otherwise appears makes that
    token never appear in the output.
 
-## Acceleration
+## Acceleration (legacy — pre-Task, non-functional)
+
+> **These blocks do not run.** They invoke `make libbinding.a`, but this fork has
+> no Makefile — the Make flow was replaced by [Task](https://taskfile.dev) (see the
+> note near the top of this README). They are retained only as a record of the
+> upstream flags each backend needs; port them to `scripts/llamacpp.sh` before use.
 
 ### OpenBLAS
 
@@ -157,7 +169,9 @@ ggml_opencl: selecting device: 'Intel(R) Graphics [0x46a6]'
 ggml_opencl: device FP16 support: true
 ```
 
-## GPU offloading
+## GPU offloading (legacy — pre-Task, non-functional)
+
+> Same caveat as **Acceleration** above: `make libbinding.a` no longer exists.
 
 ### Metal (Apple Silicon)
 
@@ -170,7 +184,7 @@ cp build/bin/ggml-metal.metal .
 
 Enjoy!
 
-The documentation is available [here](https://pkg.go.dev/github.com/go-skynet/go-llama.cpp) and the full example code is [here](https://github.com/go-skynet/go-llama.cpp/blob/master/examples/main.go).
+The documentation is available [here](https://pkg.go.dev/github.com/go-skynet/go-llama.cpp) and the full example code is [here](https://github.com/go-skynet/go-llama.cpp/blob/main/examples/main.go).
 
 ## License
 
