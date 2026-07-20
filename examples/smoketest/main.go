@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	llama "github.com/go-skynet/go-llama.cpp"
+	llama "github.com/dyammarcano/go-llama.cpp"
 )
 
 // Minimal non-interactive generation smoke test for the modernized binding.

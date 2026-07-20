@@ -16,8 +16,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/go-skynet/go-llama.cpp/logitbias"
-	"github.com/go-skynet/go-llama.cpp/streamfilter"
+	"github.com/dyammarcano/go-llama.cpp/logitbias"
+	"github.com/dyammarcano/go-llama.cpp/streamfilter"
 )
 
 // cstr allocates a C string and returns both the pointer and a free function.

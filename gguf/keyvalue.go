@@ -1,5 +1,5 @@
 // Derived from github.com/ollama/ollama/fs/gguf (MIT License).
-// Adapted for github.com/go-skynet/go-llama.cpp.
+// Adapted for github.com/dyammarcano/go-llama.cpp.
 // Reformatted to satisfy this project's golangci-lint config; logic unchanged from upstream.
 
 // Package gguf reads and parses GGUF model-file headers without loading tensor data.

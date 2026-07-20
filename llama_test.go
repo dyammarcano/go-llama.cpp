@@ -3,8 +3,8 @@ package llama_test
 import (
 	"os"
 
-	"github.com/go-skynet/go-llama.cpp"
-	. "github.com/go-skynet/go-llama.cpp"
+	"github.com/dyammarcano/go-llama.cpp"
+	. "github.com/dyammarcano/go-llama.cpp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

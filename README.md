@@ -1,4 +1,4 @@
-# [![Go Reference](https://pkg.go.dev/badge/github.com/go-skynet/go-llama.cpp.svg)](https://pkg.go.dev/github.com/go-skynet/go-llama.cpp) go-llama.cpp
+# [![Go Reference](https://pkg.go.dev/badge/github.com/dyammarcano/go-llama.cpp.svg)](https://pkg.go.dev/github.com/dyammarcano/go-llama.cpp) go-llama.cpp
 
 [LLama.cpp](https://github.com/ggerganov/llama.cpp) golang bindings.
 
@@ -10,9 +10,9 @@ If you are looking for an high-level OpenAI compatible API, check out [here](htt
 
 ## Attention!
 
-Since https://github.com/go-skynet/go-llama.cpp/pull/180 is merged, now go-llama.cpp is not anymore compatible with `ggml` format, but it works ONLY with the new `gguf` file format. See also the upstream PR: https://github.com/ggerganov/llama.cpp/pull/2398.
+Since https://github.com/dyammarcano/go-llama.cpp/pull/180 is merged, now go-llama.cpp is not anymore compatible with `ggml` format, but it works ONLY with the new `gguf` file format. See also the upstream PR: https://github.com/ggerganov/llama.cpp/pull/2398.
 
-If you need to use the `ggml` format, use the https://github.com/go-skynet/go-llama.cpp/releases/tag/pre-gguf tag.
+If you need to use the `ggml` format, use the https://github.com/dyammarcano/go-llama.cpp/releases/tag/pre-gguf tag.
 
 ## Usage
 
@@ -21,7 +21,7 @@ Note: This repository uses git submodules to keep track of [LLama.cpp](https://g
 Clone the repository locally:
 
 ```bash
-git clone --recurse-submodules https://github.com/go-skynet/go-llama.cpp
+git clone --recurse-submodules https://github.com/dyammarcano/go-llama.cpp
 ```
 
 > **Modernized fork:** this fork tracks current `llama.cpp` (pure C `llama.h`
@@ -56,7 +56,7 @@ The `gguf` subpackage reads model metadata and tensor info in pure Go — no cgo
 no llama.cpp, no GPU:
 
 ```go
-import "github.com/go-skynet/go-llama.cpp/gguf"
+import "github.com/dyammarcano/go-llama.cpp/gguf"
 
 info, err := gguf.Stat("model.gguf")
 // info.Architecture, info.ContextLength, info.BlockCount,
@@ -72,7 +72,7 @@ For lower-level access (per-tensor shapes/types, raw key-values), use
 — pure Go, no cgo, no GPU calls (the caller supplies the budget):
 
 ```go
-import "github.com/go-skynet/go-llama.cpp/gguf"
+import "github.com/dyammarcano/go-llama.cpp/gguf"
 
 est, err := gguf.EstimateLayers("model.gguf", gguf.EstimateOptions{
     NumCtx:   4096,
@@ -92,7 +92,7 @@ cgo: it holds back text that might be part of a stop sequence or an incomplete
 multibyte UTF-8 character, and reports when a stop is hit:
 
 ```go
-import "github.com/go-skynet/go-llama.cpp/streamfilter"
+import "github.com/dyammarcano/go-llama.cpp/streamfilter"
 
 f := streamfilter.New([]string{"</s>", "User:"})
 emit, stop := f.Push(piece) // forward emit to your callback; halt when stop
@@ -179,7 +179,7 @@ cp build/bin/ggml-metal.metal .
 
 Enjoy!
 
-The documentation is available [here](https://pkg.go.dev/github.com/go-skynet/go-llama.cpp) and the full example code is [here](https://github.com/go-skynet/go-llama.cpp/blob/main/examples/main.go).
+The documentation is available [here](https://pkg.go.dev/github.com/dyammarcano/go-llama.cpp) and the full example code is [here](https://github.com/dyammarcano/go-llama.cpp/blob/main/examples/main.go).
 
 ## License
 
