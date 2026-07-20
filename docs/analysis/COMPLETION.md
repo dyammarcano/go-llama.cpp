@@ -12,6 +12,23 @@
 > respected here and the bar is *not* lowered. The consequence is that the gap to done is
 > **large**, not nearly-closed. This is a "keep going, and here is exactly how far" map.
 
+> **Progress since baseline (2026-07-20, same day).** The DoD table below is the original
+> snapshot at HEAD `18b05d3` and is left intact for the record; the next `/project:align`
+> will regenerate it. Shipped since:
+> - **D1 Builds green → CLOSED.** `cbbe526` repointed the 7 CPU LDFLAGS paths to
+>   `build-cpu/` and deleted the stale `build/` tree. `go build ./examples` links (10.9 MB).
+> - **D2 Tests pass on the pin → ADVANCED.** `go test ./...` exit 0; b10069 verified at
+>   runtime — real inference across 4 models (dense Q8_0/Q4_K_M + MoE IQ1_M). Pin committed
+>   `6b690ba`. (Coverage breadth still per D8.)
+> - **D5 Stubs implemented → HONESTY-CLOSED.** `d4e9a83` makes all 5 stubs fail loudly with
+>   `ErrNotImplemented` instead of silently returning empty. (Real implementations still owed.)
+> - **D3 API documented → ADVANCED.** `d4e9a83` documents the 8 core exports and fixes the
+>   `SetMMap` doc bug. (`Set*`/`With*` naming split still open — B-list decision.)
+> - **D4 Typed errors → CLOSED.** `d4e9a83` adds `errors.go` sentinels wrapped with `%w`.
+> - **D15 Rollback safety → CLOSED.** Tag `llama.cpp-19e92c3` pushed to origin.
+> - **Still above the line:** D6 module identity (decision), D7 CI, D8 coverage/fixture,
+>   D9 onboarding docs, D10 release; B-list: naming split, distribution model.
+
 ---
 
 ## 1. Burndown delta

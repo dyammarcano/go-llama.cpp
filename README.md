@@ -43,11 +43,6 @@ task build:vulkan  # MinGW static, GGML_VULKAN=ON (needs the Vulkan SDK)
 
 Then run the example:
 
-> **Known issue (2026-07-20):** the CPU `go run` below currently fails to link.
-> `link_static_windows.go:10` points at `llama.cpp/build/`, but `scripts/llamacpp.sh`
-> writes to `llama.cpp/build-cpu/`, so cgo picks up a stale library tree. Repointing
-> those paths to `build-cpu/` is the fix.
-
 ```
 go run ./examples -m "/model/path/here" -t 14          # CPU
 go run -tags cuda ./examples -m "/model/path/here"      # CUDA (ship the build-cuda DLLs on PATH)
