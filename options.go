@@ -141,7 +141,7 @@ func SetModelSeed(c int) ModelOption {
 	}
 }
 
-// SetContext sets the context size.
+// SetMMap enables or disables memory-mapping of the model file.
 func SetMMap(b bool) ModelOption {
 	return func(p *ModelOptions) {
 		p.MMap = b

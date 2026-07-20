@@ -70,12 +70,13 @@ how much is 2+2?
 			)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(model).ToNot(BeNil())
-			text, err := model.SpeculativeSampling(model2, `[INST] Answer to the following question:
+			// SpeculativeSampling is exported but not yet implemented; it must
+			// fail loudly with ErrNotImplemented rather than silently return "".
+			_, err = model.SpeculativeSampling(model2, `[INST] Answer to the following question:
 how much is 2+2?
 [/INST]`, llama.SetNDraft(16),
 			)
-			Expect(err).ToNot(HaveOccurred(), text)
-			Expect(text).To(ContainSubstring("4"), text)
+			Expect(err).To(MatchError(ErrNotImplemented))
 		})
 
 		It("tokenizes strings successfully", func() {

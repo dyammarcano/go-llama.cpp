@@ -12,7 +12,6 @@ import "C"
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"unsafe"
@@ -61,12 +60,19 @@ func cLogitBias(spec string) (toks *C.int32_t, vals *C.float, count C.int, clean
 	}
 }
 
+// LLama is a handle to a loaded llama.cpp model and its context. It is created
+// with New and must be released with Free when no longer needed. A LLama is not
+// safe for concurrent use by multiple goroutines.
 type LLama struct {
 	state       unsafe.Pointer
 	embeddings  bool
 	contextSize int
 }
 
+// New loads the GGUF model at the given path and returns a ready LLama handle.
+// Configure loading with ModelOption values (context size, mmap, GPU layers,
+// LoRA, and so on). The returned handle must be released with Free.
+// It returns ErrModelLoad if the model cannot be loaded.
 func New(model string, opts ...ModelOption) (*LLama, error) {
 	mo := NewModelOptions(opts...)
 	modelPath := C.CString(model)
@@ -91,138 +97,62 @@ func New(model string, opts ...ModelOption) (*LLama, error) {
 	)
 
 	if result == nil {
-		return nil, fmt.Errorf("failed loading model")
+		return nil, fmt.Errorf("%w: %s", ErrModelLoad, model)
 	}
 
 	ll := &LLama{state: result, contextSize: mo.ContextSize, embeddings: mo.Embeddings}
 	return ll, nil
 }
 
+// Free releases the model and its context. It must be called exactly once when
+// the handle is no longer needed; the handle must not be used afterwards.
 func (l *LLama) Free() {
 	C.llama_binding_free_model(l.state)
 }
 
+// LoadState restores a previously saved context state from the given file.
+//
+// Not yet implemented: it returns ErrNotImplemented. The underlying binding is
+// a stub, so this call is a loud no-op rather than a silent one.
 func (l *LLama) LoadState(state string) error {
-	d := C.CString(state)
-	w := C.CString("rb")
-	result := C.load_state(l.state, d, w)
-
-	defer C.free(unsafe.Pointer(d)) // free allocated C string
-	defer C.free(unsafe.Pointer(w)) // free allocated C string
-
-	if result != 0 {
-		return fmt.Errorf("error while loading state")
-	}
-
-	return nil
+	return fmt.Errorf("%w: LoadState", ErrNotImplemented)
 }
 
+// SaveState writes the current context state to the given file.
+//
+// Not yet implemented: it returns ErrNotImplemented. The underlying binding is
+// a stub, so this call is a loud no-op rather than a silent one.
 func (l *LLama) SaveState(dst string) error {
-	d := C.CString(dst)
-	w := C.CString("wb")
-
-	C.save_state(l.state, d, w)
-
-	defer C.free(unsafe.Pointer(d)) // free allocated C string
-	defer C.free(unsafe.Pointer(w)) // free allocated C string
-
-	_, err := os.Stat(dst)
-	return err
+	return fmt.Errorf("%w: SaveState", ErrNotImplemented)
 }
 
-// Token Embeddings
+// TokenEmbeddings returns the embedding vector for the given token IDs.
+//
+// Not yet implemented: it returns ErrNotImplemented (or ErrEmbeddingsDisabled
+// if the model was loaded without EnableEmbeddings). The underlying binding is
+// a stub, so this fails loudly instead of returning an empty vector.
 func (l *LLama) TokenEmbeddings(tokens []int, opts ...PredictOption) ([]float32, error) {
 	if !l.embeddings {
-		return []float32{}, fmt.Errorf("model loaded without embeddings")
+		return []float32{}, ErrEmbeddingsDisabled
 	}
-
-	po := NewPredictOptions(opts...)
-
-	outSize := po.Tokens
-	if po.Tokens == 0 {
-		outSize = 9999999
-	}
-
-	floats := make([]float32, outSize)
-
-	myArray := (*C.int)(C.malloc(C.size_t(len(tokens)) * C.sizeof_int))
-
-	// Copy the values from the Go slice to the C array
-	for i, v := range tokens {
-		(*[1<<31 - 1]int32)(unsafe.Pointer(myArray))[i] = int32(v)
-	}
-	// llama_allocate_params marshals PredictOptions into a C binding_params; see
-	// binding.h for the authoritative signature. The trailing params are
-	// min_p followed by the parsed logit_bias token/value arrays + count (the
-	// legacy const char *logit_bias string param was removed in feature #4).
-	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
-	defer lbFree()
-	params := C.llama_allocate_params(C.CString(""), C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
-		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
-		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
-	)
-	ret := C.get_token_embeddings(params, l.state, myArray, C.int(len(tokens)), (*C.float)(&floats[0]))
-	if ret != 0 {
-		return floats, fmt.Errorf("embedding inference failed")
-	}
-	return floats, nil
+	return []float32{}, fmt.Errorf("%w: TokenEmbeddings", ErrNotImplemented)
 }
 
-// Embeddings
+// Embeddings returns the embedding vector for the given text.
+//
+// Not yet implemented: it returns ErrNotImplemented (or ErrEmbeddingsDisabled
+// if the model was loaded without EnableEmbeddings). The underlying binding is
+// a stub, so this fails loudly instead of returning an empty vector.
 func (l *LLama) Embeddings(text string, opts ...PredictOption) ([]float32, error) {
 	if !l.embeddings {
-		return []float32{}, fmt.Errorf("model loaded without embeddings")
+		return []float32{}, ErrEmbeddingsDisabled
 	}
-
-	po := NewPredictOptions(opts...)
-
-	input := C.CString(text)
-	if po.Tokens == 0 {
-		po.Tokens = 99999999
-	}
-	floats := make([]float32, po.Tokens)
-	reverseCount := len(po.StopPrompts)
-	reversePrompt := make([]*C.char, reverseCount)
-	var pass **C.char
-	for i, s := range po.StopPrompts {
-		cs := C.CString(s)
-		reversePrompt[i] = cs
-		pass = &reversePrompt[0]
-	}
-
-	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
-	defer lbFree()
-	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), pass, C.int(reverseCount),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		C.CString(po.PathPromptCache), C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		C.CString(po.MainGPU), C.CString(po.TensorSplit),
-		C.bool(po.PromptCacheRO),
-		C.CString(po.Grammar),
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), C.CString(po.NegativePrompt),
-		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
-	)
-
-	ret := C.get_embeddings(params, l.state, (*C.float)(&floats[0]))
-	if ret != 0 {
-		return floats, fmt.Errorf("embedding inference failed")
-	}
-
-	return floats, nil
+	return []float32{}, fmt.Errorf("%w: Embeddings", ErrNotImplemented)
 }
 
+// Eval runs a forward pass over the given text without returning generated
+// output. It is used to warm the context / KV cache. Configure it with
+// PredictOption values. It returns ErrInference if the forward pass fails.
 func (l *LLama) Eval(text string, opts ...PredictOption) error {
 	po := NewPredictOptions(opts...)
 
@@ -257,7 +187,7 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 	)
 	ret := C.eval(params, l.state, input)
 	if ret != 0 {
-		return fmt.Errorf("inference failed")
+		return ErrInference
 	}
 
 	C.llama_free_params(params)
@@ -265,73 +195,20 @@ func (l *LLama) Eval(text string, opts ...PredictOption) error {
 	return nil
 }
 
+// SpeculativeSampling generates text from the target model (the receiver) using
+// the given draft model to propose tokens.
+//
+// Not yet implemented: it returns ErrNotImplemented. The underlying binding is a
+// stub, so this fails loudly instead of returning an empty string.
 func (l *LLama) SpeculativeSampling(ll *LLama, text string, opts ...PredictOption) (string, error) {
-	po := NewPredictOptions(opts...)
-
-	prev := getCallback(l.state)
-	user := po.TokenCallback
-	if user == nil {
-		user = prev
-	}
-	sink := streamfilter.NewSink(po.StopPrompts, user)
-	setCallback(l.state, sink.OnToken)
-	defer setCallback(l.state, prev)
-
-	input := C.CString(text)
-	defer C.free(unsafe.Pointer(input))
-	if po.Tokens == 0 {
-		po.Tokens = 99999999
-	}
-
-	// C-heap result buffer (GC-safe across the cgo callback); content ignored —
-	// the result text is assembled in Go from the sink.
-	outBuf := C.malloc(C.size_t(po.Tokens))
-	if outBuf == nil {
-		return "", fmt.Errorf("inference: out of memory allocating %d bytes", po.Tokens)
-	}
-	defer C.free(outBuf)
-
-	// Free C strings that cannot be bound to a named variable before the call.
-	pathPromptCache, freePathPromptCache := cstr(po.PathPromptCache)
-	defer freePathPromptCache()
-	mainGPU, freeMainGPU := cstr(po.MainGPU)
-	defer freeMainGPU()
-	tensorSplit, freeTensorSplit := cstr(po.TensorSplit)
-	defer freeTensorSplit()
-	grammar, freeGrammar := cstr(po.Grammar)
-	defer freeGrammar()
-	negativePrompt, freeNegativePrompt := cstr(po.NegativePrompt)
-	defer freeNegativePrompt()
-
-	lbTok, lbVal, lbCnt, lbFree := cLogitBias(po.LogitBias)
-	defer lbFree()
-	params := C.llama_allocate_params(input, C.int(po.Seed), C.int(po.Threads), C.int(po.Tokens), C.int(po.TopK),
-		C.float(po.TopP), C.float(po.Temperature), C.float(po.Penalty), C.int(po.Repeat),
-		C.bool(po.IgnoreEOS), C.bool(po.F16KV),
-		C.int(po.Batch), C.int(po.NKeep), nil, C.int(0),
-		C.float(po.TailFreeSamplingZ), C.float(po.TypicalP), C.float(po.FrequencyPenalty), C.float(po.PresencePenalty),
-		C.int(po.Mirostat), C.float(po.MirostatETA), C.float(po.MirostatTAU), C.bool(po.PenalizeNL),
-		pathPromptCache, C.bool(po.PromptCacheAll), C.bool(po.MLock), C.bool(po.MMap),
-		mainGPU, tensorSplit,
-		C.bool(po.PromptCacheRO),
-		grammar,
-		C.float(po.RopeFreqBase), C.float(po.RopeFreqScale), C.float(po.NegativePromptScale), negativePrompt,
-		C.int(po.NDraft), C.float(po.MinP), lbTok, lbVal, lbCnt,
-	)
-	defer C.llama_free_params(params)
-	ret := C.speculative_sampling(params, l.state, ll.state, (*C.char)(outBuf), C.bool(po.DebugMode))
-	if ret != 0 {
-		return "", fmt.Errorf("inference failed")
-	}
-	res := sink.Finish()
-
-	res = strings.TrimPrefix(res, " ")
-	res = strings.TrimPrefix(res, text)
-	res = strings.TrimPrefix(res, "\n")
-
-	return res, nil
+	return "", fmt.Errorf("%w: SpeculativeSampling", ErrNotImplemented)
 }
 
+// Predict generates text from the given prompt and returns the completed
+// output. Configure sampling and stopping with PredictOption values; use
+// SetTokenCallback to stream tokens as they are produced. It returns
+// ErrOutOfMemory if the result buffer cannot be allocated, or ErrInference if
+// generation fails.
 func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	po := NewPredictOptions(opts...)
 
@@ -359,7 +236,7 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	// no size argument, so the buffer is sized to po.Tokens to avoid an overrun.
 	outBuf := C.malloc(C.size_t(po.Tokens))
 	if outBuf == nil {
-		return "", fmt.Errorf("inference: out of memory allocating %d bytes", po.Tokens)
+		return "", fmt.Errorf("%w: %d bytes", ErrOutOfMemory, po.Tokens)
 	}
 	defer C.free(outBuf)
 
@@ -393,7 +270,7 @@ func (l *LLama) Predict(text string, opts ...PredictOption) (string, error) {
 	defer C.llama_free_params(params)
 	ret := C.llama_predict(params, l.state, (*C.char)(outBuf), C.bool(po.DebugMode))
 	if ret != 0 {
-		return "", fmt.Errorf("inference failed")
+		return "", ErrInference
 	}
 	res := sink.Finish()
 
@@ -464,11 +341,11 @@ func (l *LLama) PredictResult(text string, opts ...PredictOption) (string, int, 
 	const scratch = 32768
 	cbuf := C.malloc(C.size_t(scratch))
 	if cbuf == nil {
-		return "", 0, fmt.Errorf("inference: out of memory allocating %d bytes", scratch)
+		return "", 0, fmt.Errorf("%w: %d bytes", ErrOutOfMemory, scratch)
 	}
 	defer C.free(cbuf)
 	if C.llama_predict_full(params, l.state, (*C.char)(cbuf), C.int(scratch), &nTok, C.bool(po.DebugMode)) < 0 {
-		return "", 0, fmt.Errorf("inference failed")
+		return "", 0, ErrInference
 	}
 
 	return sink.Finish(), int(nTok), nil
